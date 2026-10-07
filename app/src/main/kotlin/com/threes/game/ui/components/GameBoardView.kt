@@ -31,6 +31,9 @@ fun GameBoardView(
     nextTile: Tile,
     onMoveRequested: (Direction) -> Unit,
     getMovableLines: (Direction) -> List<Int>,
+    onDragThresholdReached: () -> Unit = {},
+    onDragBlocked: () -> Unit = {},
+    onSnapBack: () -> Unit = {},
     isDarkTheme: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -43,6 +46,7 @@ fun GameBoardView(
     var movableLineIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var totalDragAccumulator by remember { mutableStateOf(Offset.Zero) }
     var isDragLocked by remember { mutableStateOf(false) }
+    var hasReachedThreshold by remember { mutableStateOf(false) }
 
     val lookOffsetX = remember(dragOffsetAnim.value, activeDirection) {
         when (activeDirection) {
@@ -75,6 +79,7 @@ fun GameBoardView(
                         isDragLocked = false
                         activeDirection = null
                         movableLineIndices = emptyList()
+                        hasReachedThreshold = false
                     },
                     onDragEnd = {
                         val currentDir = activeDirection
@@ -88,6 +93,9 @@ fun GameBoardView(
                                 dragOffsetAnim.snapTo(0f)
                             } else {
                                 // Snap back with bouncy spring
+                                if (hasMovable && abs(currentOffset) > 10f) {
+                                    onSnapBack()
+                                }
                                 dragOffsetAnim.animateTo(
                                     targetValue = 0f,
                                     animationSpec = spring(
@@ -99,6 +107,7 @@ fun GameBoardView(
                             activeDirection = null
                             isDragLocked = false
                             movableLineIndices = emptyList()
+                            hasReachedThreshold = false
                         }
                     },
                     onDragCancel = {
@@ -107,6 +116,7 @@ fun GameBoardView(
                             activeDirection = null
                             isDragLocked = false
                             movableLineIndices = emptyList()
+                            hasReachedThreshold = false
                         }
                     },
                     onDrag = { change, dragAmount ->
@@ -126,7 +136,11 @@ fun GameBoardView(
                                     if (dy > 0) Direction.DOWN else Direction.UP
                                 }
                                 activeDirection = dir
-                                movableLineIndices = getMovableLines(dir)
+                                val lines = getMovableLines(dir)
+                                movableLineIndices = lines
+                                if (lines.isEmpty()) {
+                                    onDragBlocked()
+                                }
                             }
                         }
 
@@ -147,6 +161,14 @@ fun GameBoardView(
                             } else {
                                 val resistance = 0.2f
                                 rawDelta * resistance
+                            }
+
+                            if (hasMovable) {
+                                val isPastThreshold = abs(targetOffset) >= cellSizePx * 0.42f
+                                if (isPastThreshold != hasReachedThreshold) {
+                                    hasReachedThreshold = isPastThreshold
+                                    onDragThresholdReached()
+                                }
                             }
 
                             coroutineScope.launch {

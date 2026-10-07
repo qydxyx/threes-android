@@ -25,13 +25,24 @@ class SoundEngine(private val context: Context) {
     var hapticsEnabled: Boolean = true
 
     private val vibrator: Vibrator? by lazy {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            vibratorManager?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vibratorManager?.defaultVibrator ?: (context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+        } catch (_: Exception) {
+            null
         }
+    }
+
+    private val hapticAudioAttributes by lazy {
+        AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .build()
     }
 
     private val sampleRate = 44100
@@ -76,33 +87,38 @@ class SoundEngine(private val context: Context) {
     }
 
     fun playMerge(tileValue: Int) {
-        if (!soundEnabled) return
-        scope.launch {
-            val pcm = chimeCache[tileValue] ?: generateBellChime(523.25f, 0.3f)
-            playPcm(pcm)
+        if (soundEnabled) {
+            scope.launch {
+                val pcm = chimeCache[tileValue] ?: generateBellChime(523.25f, 0.3f)
+                playPcm(pcm)
+            }
         }
         vibrateMerge()
     }
 
     fun playSlide() {
-        if (!soundEnabled) return
-        scope.launch {
-            slideAudio?.let { playPcm(it) }
+        if (soundEnabled) {
+            scope.launch {
+                slideAudio?.let { playPcm(it) }
+            }
         }
+        vibrateSlide()
     }
 
     fun playSnap() {
-        if (!soundEnabled) return
-        scope.launch {
-            snapAudio?.let { playPcm(it) }
+        if (soundEnabled) {
+            scope.launch {
+                snapAudio?.let { playPcm(it) }
+            }
         }
         vibrateTick()
     }
 
     fun playGameOver() {
-        if (!soundEnabled) return
-        scope.launch {
-            gameOverAudio?.let { playPcm(it) }
+        if (soundEnabled) {
+            scope.launch {
+                gameOverAudio?.let { playPcm(it) }
+            }
         }
         vibrateGameOver()
     }
@@ -282,45 +298,95 @@ class SoundEngine(private val context: Context) {
     }
 
     // Haptics
-    fun vibrateTick() {
+    private fun doVibrate(
+        durationMs: Long,
+        predefinedEffectId: Int = -1,
+        amplitude: Int = VibrationEffect.DEFAULT_AMPLITUDE
+    ) {
         if (!hapticsEnabled) return
+        val v = vibrator ?: return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(10)
+            if (!v.hasVibrator()) return
+
+            var played = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && predefinedEffectId >= 0) {
+                try {
+                    val effect = VibrationEffect.createPredefined(predefinedEffectId)
+                    v.vibrate(effect, hapticAudioAttributes)
+                    played = true
+                } catch (_: Exception) {
+                    played = false
+                }
+            }
+
+            if (!played) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val effect = try {
+                        if (v.hasAmplitudeControl() && amplitude in 1..255) {
+                            VibrationEffect.createOneShot(durationMs, amplitude)
+                        } else {
+                            VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
+                        }
+                    } catch (_: Exception) {
+                        VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
+                    }
+                    v.vibrate(effect, hapticAudioAttributes)
+                } else {
+                    @Suppress("DEPRECATION")
+                    v.vibrate(durationMs)
+                }
             }
         } catch (_: Exception) {}
     }
 
+    fun vibrateTick() {
+        val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_CLICK else -1
+        doVibrate(durationMs = 15, predefinedEffectId = effectId, amplitude = 100)
+    }
+
+    fun vibrateSlide() {
+        val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_TICK else -1
+        doVibrate(durationMs = 12, predefinedEffectId = effectId, amplitude = 70)
+    }
+
+    fun vibrateDragThreshold() {
+        val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_CLICK else -1
+        doVibrate(durationMs = 15, predefinedEffectId = effectId, amplitude = 120)
+    }
+
+    fun vibrateBlocked() {
+        val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_HEAVY_CLICK else -1
+        doVibrate(durationMs = 25, predefinedEffectId = effectId, amplitude = 160)
+    }
+
     fun vibrateMerge() {
-        if (!hapticsEnabled) return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(25)
-            }
-        } catch (_: Exception) {}
+        val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_HEAVY_CLICK else -1
+        doVibrate(durationMs = 35, predefinedEffectId = effectId, amplitude = 180)
     }
 
     fun vibrateGameOver() {
         if (!hapticsEnabled) return
+        val v = vibrator ?: return
         try {
+            if (!v.hasVibrator()) return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(
+                v.vibrate(
                     VibrationEffect.createWaveform(
                         longArrayOf(0, 50, 80, 100),
                         intArrayOf(0, 100, 0, 150),
                         -1
-                    )
+                    ),
+                    hapticAudioAttributes
                 )
             } else {
                 @Suppress("DEPRECATION")
-                vibrator?.vibrate(200)
+                v.vibrate(longArrayOf(0, 50, 80, 100), -1)
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            try {
+                @Suppress("DEPRECATION")
+                v.vibrate(200)
+            } catch (_: Exception) {}
+        }
     }
 }

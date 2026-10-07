@@ -129,6 +129,18 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
         sound.playCharacterVoice(value)
     }
 
+    fun onDragThresholdReached() {
+        sound.vibrateDragThreshold()
+    }
+
+    fun onDragBlocked() {
+        sound.vibrateBlocked()
+    }
+
+    fun onSnapBack() {
+        sound.vibrateTick()
+    }
+
     // Settings actions
     fun setNightMode(enabled: Boolean) {
         prefs.isNightMode = enabled

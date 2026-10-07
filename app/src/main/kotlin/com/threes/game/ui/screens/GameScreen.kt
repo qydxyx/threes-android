@@ -156,6 +156,9 @@ fun GameScreen(
                 nextTile = uiState.nextTile,
                 onMoveRequested = { direction -> viewModel.onMove(direction) },
                 getMovableLines = { direction -> viewModel.getMovableLines(direction) },
+                onDragThresholdReached = { viewModel.onDragThresholdReached() },
+                onDragBlocked = { viewModel.onDragBlocked() },
+                onSnapBack = { viewModel.onSnapBack() },
                 isDarkTheme = isDarkTheme,
                 modifier = Modifier.weight(1f, fill = false)
             )
