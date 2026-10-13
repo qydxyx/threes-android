@@ -7,12 +7,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class SavedGame(
-    val grid: Array<Array<Tile?>>,
+    val grid: List<List<Tile?>>,
     val nextTile: Tile,
     val deck: List<Int>,
     val score: Int,
     val maxTile: Int,
-    val moveCount: Int
+    val moveCount: Int,
+    val isNewRecord: Boolean = false,
+    val baselineHighScore: Int = 0
 )
 
 class PreferencesRepository(context: Context) {
@@ -68,11 +70,12 @@ class PreferencesRepository(context: Context) {
 
     fun unlockCharacter(value: Int) {
         val current = getUnlockedCharacters().toMutableSet()
-        current.add(value)
-        prefs.edit().putStringSet(
-            KEY_UNLOCKED_CHARACTERS,
-            current.map { it.toString() }.toSet()
-        ).apply()
+        if (current.add(value)) {
+            prefs.edit().putStringSet(
+                KEY_UNLOCKED_CHARACTERS,
+                current.map { it.toString() }.toSet()
+            ).apply()
+        }
     }
 
     fun saveGame(savedGame: SavedGame) {
@@ -81,12 +84,17 @@ class PreferencesRepository(context: Context) {
             json.put("score", savedGame.score)
             json.put("maxTile", savedGame.maxTile)
             json.put("moveCount", savedGame.moveCount)
+            json.put("isNewRecord", savedGame.isNewRecord)
+            json.put("baselineHighScore", savedGame.baselineHighScore)
 
             // Save next tile
             val nextJson = JSONObject()
             nextJson.put("id", savedGame.nextTile.id)
             nextJson.put("value", savedGame.nextTile.value)
             nextJson.put("isBonus", savedGame.nextTile.isBonus)
+            val candidatesArr = JSONArray()
+            savedGame.nextTile.bonusCandidates.forEach { candidatesArr.put(it) }
+            nextJson.put("bonusCandidates", candidatesArr)
             json.put("nextTile", nextJson)
 
             // Save deck
@@ -99,7 +107,7 @@ class PreferencesRepository(context: Context) {
             for (r in 0 until 4) {
                 val rowArray = JSONArray()
                 for (c in 0 until 4) {
-                    val tile = savedGame.grid[r][c]
+                    val tile = savedGame.grid.getOrNull(r)?.getOrNull(c)
                     if (tile != null) {
                         val tileObj = JSONObject()
                         tileObj.put("id", tile.id)
@@ -125,12 +133,22 @@ class PreferencesRepository(context: Context) {
             val score = json.getInt("score")
             val maxTile = json.getInt("maxTile")
             val moveCount = json.getInt("moveCount")
+            val isNewRecord = json.optBoolean("isNewRecord", false)
+            val baselineHighScore = json.optInt("baselineHighScore", highScore)
 
             val nextObj = json.getJSONObject("nextTile")
+            val candidates = mutableListOf<Int>()
+            val candidatesArr = nextObj.optJSONArray("bonusCandidates")
+            if (candidatesArr != null) {
+                for (i in 0 until candidatesArr.length()) {
+                    candidates.add(candidatesArr.getInt(i))
+                }
+            }
             val nextTile = Tile(
                 id = nextObj.getLong("id"),
                 value = nextObj.getInt("value"),
-                isBonus = nextObj.optBoolean("isBonus", false)
+                isBonus = nextObj.optBoolean("isBonus", false),
+                bonusCandidates = candidates
             )
 
             val deckArray = json.getJSONArray("deck")
@@ -140,17 +158,18 @@ class PreferencesRepository(context: Context) {
             }
 
             val gridArray = json.getJSONArray("grid")
-            val grid = Array(4) { Array<Tile?>(4) { null } }
-            for (r in 0 until 4) {
+            val grid = (0 until 4).map { r ->
                 val rowArray = gridArray.getJSONArray(r)
-                for (c in 0 until 4) {
+                (0 until 4).map { c ->
                     if (!rowArray.isNull(c)) {
                         val tileObj = rowArray.getJSONObject(c)
-                        grid[r][c] = Tile(
+                        Tile(
                             id = tileObj.getLong("id"),
                             value = tileObj.getInt("value"),
                             isBonus = tileObj.optBoolean("isBonus", false)
                         )
+                    } else {
+                        null
                     }
                 }
             }
@@ -161,7 +180,9 @@ class PreferencesRepository(context: Context) {
                 deck = deck,
                 score = score,
                 maxTile = maxTile,
-                moveCount = moveCount
+                moveCount = moveCount,
+                isNewRecord = isNewRecord,
+                baselineHighScore = baselineHighScore
             )
         } catch (_: Exception) {
             null

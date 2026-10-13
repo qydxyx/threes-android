@@ -1,26 +1,63 @@
 package com.threes.game.ui.components
 
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.threes.game.model.Tile
 import com.threes.game.ui.characters.CharacterFace
-import com.threes.game.ui.characters.CharacterRegistry
-import com.threes.game.ui.theme.*
+import com.threes.game.ui.theme.Card1Bg
+import com.threes.game.ui.theme.Card1Edge
+import com.threes.game.ui.theme.Card1Text
+import com.threes.game.ui.theme.Card2Bg
+import com.threes.game.ui.theme.Card2Edge
+import com.threes.game.ui.theme.Card2Text
+import com.threes.game.ui.theme.Card3Bg
+import com.threes.game.ui.theme.Card3Edge
+import com.threes.game.ui.theme.Card3Text
+import com.threes.game.ui.theme.EmptyCellDark
+import com.threes.game.ui.theme.EmptyCellLight
 import kotlinx.coroutines.delay
 import kotlin.random.Random
+
+@Composable
+fun EmptyCellSlot(
+    isDarkTheme: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isDarkTheme) EmptyCellDark else EmptyCellLight)
+    )
+}
 
 @Composable
 fun TileView(
@@ -28,25 +65,23 @@ fun TileView(
     modifier: Modifier = Modifier,
     isDarkTheme: Boolean = false,
     lookOffsetX: Float = 0f,
-    lookOffsetY: Float = 0f
+    lookOffsetY: Float = 0f,
+    isCompact: Boolean = false
 ) {
     if (tile == null) {
-        // Empty cell slot recess
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(4.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (isDarkTheme) EmptyCellDark else EmptyCellLight)
-        )
+        EmptyCellSlot(isDarkTheme = isDarkTheme, modifier = modifier)
         return
     }
 
-    // Animation state for pop/merge
-    val scaleAnim = remember { Animatable(if (tile.isNew) 0.5f else 1f) }
+    // Key scale animation by tile.id so newly spawned tiles at a previously occupied cell
+    // always start from 0.5f and play their entrance pop animation.
+    val scaleAnim = remember(tile.id) {
+        Animatable(if (tile.isNew) 0.5f else 1f)
+    }
 
     LaunchedEffect(tile.id, tile.isMerged, tile.isNew) {
         if (tile.isMerged) {
+            scaleAnim.snapTo(1f)
             scaleAnim.animateTo(
                 targetValue = 1.18f,
                 animationSpec = tween(100, easing = FastOutSlowInEasing)
@@ -60,6 +95,9 @@ fun TileView(
                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
             )
         } else if (tile.isNew) {
+            if (scaleAnim.value > 0.6f) {
+                scaleAnim.snapTo(0.5f)
+            }
             scaleAnim.animateTo(
                 targetValue = 1f,
                 animationSpec = spring(
@@ -67,11 +105,13 @@ fun TileView(
                     stiffness = Spring.StiffnessMediumLow
                 )
             )
+        } else if (scaleAnim.value != 1f) {
+            scaleAnim.snapTo(1f)
         }
     }
 
-    // Cute periodic eye blinking
-    var isBlinking by remember { mutableStateOf(false) }
+    // Periodic cute eye blinking
+    var isBlinking by remember(tile.id) { mutableStateOf(false) }
     LaunchedEffect(tile.id) {
         while (true) {
             delay(Random.nextLong(3000, 6000))
@@ -80,8 +120,6 @@ fun TileView(
             isBlinking = false
         }
     }
-
-    val charInfo = CharacterRegistry.getInfo(tile.value)
 
     val bgColor = when {
         tile.isOne -> Card1Bg
@@ -102,19 +140,35 @@ fun TileView(
     }
 
     val valueText = tile.value.toString()
-    val fontSize = when {
-        valueText.length <= 2 -> 30.sp
-        valueText.length == 3 -> 23.sp
-        else -> 18.sp
+    val fontSize = if (isCompact) {
+        when {
+            valueText.length <= 2 -> 14.sp
+            valueText.length == 3 -> 11.sp
+            else -> 9.sp
+        }
+    } else {
+        when {
+            valueText.length <= 2 -> 30.sp
+            valueText.length == 3 -> 23.sp
+            else -> 18.sp
+        }
     }
+
+    val outerPadding = if (isCompact) 2.dp else 4.dp
+    val cornerRadius = if (isCompact) 8.dp else 12.dp
+    val innerCornerRadius = if (isCompact) 7.dp else 10.dp
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(4.dp)
-            .scale(scaleAnim.value)
-            .shadow(3.dp, shape = RoundedCornerShape(12.dp))
-            .clip(RoundedCornerShape(12.dp))
+            .padding(outerPadding)
+            .graphicsLayer {
+                val s = scaleAnim.value
+                scaleX = s
+                scaleY = s
+            }
+            .shadow(if (isCompact) 1.dp else 3.dp, shape = RoundedCornerShape(cornerRadius))
+            .clip(RoundedCornerShape(cornerRadius))
             .background(edgeColor)
     ) {
         // Physical card body with 3D bottom edge offset
@@ -122,7 +176,7 @@ fun TileView(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.93f)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(innerCornerRadius))
                 .background(bgColor)
                 .align(Alignment.TopCenter)
         ) {
@@ -131,7 +185,7 @@ fun TileView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(0.58f)
-                    .padding(top = 6.dp),
+                    .padding(top = if (isCompact) 2.dp else 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(

@@ -2,7 +2,13 @@ package com.threes.game.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,7 +22,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.threes.game.model.Tile
-import com.threes.game.ui.theme.*
+import com.threes.game.ui.theme.NextHint1
+import com.threes.game.ui.theme.NextHint2
+import com.threes.game.ui.theme.NextHint3
+import com.threes.game.ui.theme.NextHintBonus
+import com.threes.game.ui.theme.TextPrimaryLight
+import com.threes.game.ui.theme.TextSecondaryDark
+import com.threes.game.ui.theme.TextSecondaryLight
 
 @Composable
 fun NextTileBar(
@@ -40,7 +52,14 @@ fun NextTileBar(
     }
 
     val labelText = when {
-        nextTile.isBonus -> "+ ${nextTile.value}"
+        nextTile.isBonus -> {
+            val candidates = nextTile.bonusCandidates
+            if (candidates.size > 1) {
+                "+ " + candidates.joinToString(" · ")
+            } else {
+                "+ ${nextTile.value}"
+            }
+        }
         nextTile.isOne -> "1"
         nextTile.isTwo -> "2"
         else -> "3"
@@ -64,16 +83,17 @@ fun NextTileBar(
 
         Box(
             modifier = Modifier
-                .width(68.dp)
+                .defaultMinSize(minWidth = 68.dp)
                 .height(30.dp)
                 .shadow(2.dp, RoundedCornerShape(8.dp))
                 .clip(RoundedCornerShape(8.dp))
-                .background(animatedColor),
+                .background(animatedColor)
+                .padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = labelText,
-                fontSize = 16.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Black,
                 color = textColor
             )

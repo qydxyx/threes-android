@@ -6,15 +6,36 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,10 +50,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.threes.game.model.Tile
-import com.threes.game.ui.characters.CharacterInfo
 import com.threes.game.ui.characters.CharacterRegistry
 import com.threes.game.ui.components.TileView
-import com.threes.game.ui.theme.*
+import com.threes.game.ui.theme.BoardBackgroundLight
+import com.threes.game.ui.theme.BoardPlateDark
+import com.threes.game.ui.theme.Card1Bg
+import com.threes.game.ui.theme.EmptyCellDark
+import com.threes.game.ui.theme.EmptyCellLight
+import com.threes.game.ui.theme.TextPrimaryDark
+import com.threes.game.ui.theme.TextPrimaryLight
+import com.threes.game.ui.theme.TextSecondaryDark
+import com.threes.game.ui.theme.TextSecondaryLight
 import kotlinx.coroutines.launch
 
 @Composable
@@ -42,9 +70,10 @@ fun CastBookDialog(
     onPlayVoice: (Int) -> Unit,
     isDarkTheme: Boolean = false
 ) {
-    val allValues = listOf(1, 2, 3, 6, 12, 24, 48, 96, 192, 384, 768, 1536, 3072, 6144)
+    val allValues = remember { listOf(1, 2, 3, 6, 12, 24, 48, 96, 192, 384, 768, 1536, 3072, 6144) }
     var selectedValue by remember { mutableStateOf(3) }
-    val selectedInfo = CharacterRegistry.getInfo(selectedValue)
+    val selectedInfo = remember(selectedValue) { CharacterRegistry.getInfo(selectedValue) }
+    val selectedPreviewTile = remember(selectedValue) { Tile.preview(selectedValue) }
     val isSelectedUnlocked = unlockedValues.contains(selectedValue)
     val coroutineScope = rememberCoroutineScope()
     val cardScaleAnim = remember { Animatable(1f) }
@@ -129,7 +158,7 @@ fun CastBookDialog(
                                     }
                             ) {
                                 TileView(
-                                    tile = Tile.create(selectedValue),
+                                    tile = selectedPreviewTile,
                                     isDarkTheme = isDarkTheme
                                 )
                             }
@@ -172,7 +201,7 @@ fun CastBookDialog(
                             if (selectedValue >= 3) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Score: ${Tile.create(selectedValue).score} pts",
+                                    text = "Score: ${selectedPreviewTile.score} pts",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
@@ -223,9 +252,10 @@ fun CastBookDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp)
                 ) {
-                    items(allValues) { value ->
+                    items(allValues, key = { it }) { value ->
                         val isUnlocked = unlockedValues.contains(value)
                         val isSelected = value == selectedValue
+                        val thumbTile = remember(value) { Tile.preview(value) }
 
                         Box(
                             modifier = Modifier
@@ -244,8 +274,9 @@ fun CastBookDialog(
                         ) {
                             if (isUnlocked) {
                                 TileView(
-                                    tile = Tile.create(value),
-                                    isDarkTheme = isDarkTheme
+                                    tile = thumbTile,
+                                    isDarkTheme = isDarkTheme,
+                                    isCompact = true
                                 )
                             } else {
                                 Box(

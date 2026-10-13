@@ -1,13 +1,16 @@
 package com.threes.game.model
 
-import kotlin.math.roundToInt
+import androidx.compose.runtime.Immutable
+import java.util.concurrent.atomic.AtomicLong
 
+@Immutable
 data class Tile(
     val id: Long,
     val value: Int,
     val isBonus: Boolean = false,
     val isMerged: Boolean = false,
-    val isNew: Boolean = false
+    val isNew: Boolean = false,
+    val bonusCandidates: List<Int> = emptyList()
 ) {
     val isOne: Boolean get() = value == 1
     val isTwo: Boolean get() = value == 2
@@ -35,17 +38,40 @@ data class Tile(
         }
 
     companion object {
-        private var idCounter = 0L
+        private val idCounter = AtomicLong(0L)
 
-        fun nextId(): Long = ++idCounter
+        fun nextId(): Long = idCounter.incrementAndGet()
 
-        fun create(value: Int, isBonus: Boolean = false, isNew: Boolean = false): Tile {
+        fun syncMaxId(maxId: Long) {
+            idCounter.updateAndGet { current -> maxOf(current, maxId) }
+        }
+
+        fun create(
+            value: Int,
+            isBonus: Boolean = false,
+            isNew: Boolean = false,
+            bonusCandidates: List<Int> = emptyList()
+        ): Tile {
             return Tile(
                 id = nextId(),
                 value = value,
                 isBonus = isBonus,
                 isMerged = false,
-                isNew = isNew
+                isNew = isNew,
+                bonusCandidates = bonusCandidates
+            )
+        }
+
+        /**
+         * Creates a deterministic static Tile for UI galleries/previews without incrementing idCounter.
+         */
+        fun preview(value: Int): Tile {
+            return Tile(
+                id = -value.toLong(),
+                value = value,
+                isBonus = false,
+                isMerged = false,
+                isNew = false
             )
         }
 

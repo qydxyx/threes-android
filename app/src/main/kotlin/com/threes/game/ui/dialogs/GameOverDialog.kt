@@ -3,12 +3,32 @@ package com.threes.game.ui.dialogs
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,22 +42,34 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.threes.game.model.Tile
-import com.threes.game.ui.theme.*
+import com.threes.game.ui.theme.AccentToddYellow
+import com.threes.game.ui.theme.BoardBackgroundLight
+import com.threes.game.ui.theme.BoardPlateDark
+import com.threes.game.ui.theme.Card1Bg
+import com.threes.game.ui.theme.EmptyCellDark
+import com.threes.game.ui.theme.EmptyCellLight
+import com.threes.game.ui.theme.TextPrimaryDark
+import com.threes.game.ui.theme.TextPrimaryLight
+import com.threes.game.ui.theme.TextSecondaryDark
+import com.threes.game.ui.theme.TextSecondaryLight
 
 @Composable
 fun GameOverDialog(
     score: Int,
     highScore: Int,
     isNewRecord: Boolean,
-    grid: Array<Array<Tile?>>,
+    grid: List<List<Tile?>>,
+    canUndo: Boolean = false,
+    onUndoLastMove: () -> Unit = {},
+    onDismissToViewBoard: () -> Unit = {},
     onPlayAgain: () -> Unit,
     isDarkTheme: Boolean = false
 ) {
     val context = LocalContext.current
 
     Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        onDismissRequest = onDismissToViewBoard,
+        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
         Surface(
             modifier = Modifier
@@ -53,13 +85,28 @@ fun GameOverDialog(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "GAME OVER",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Black,
-                    color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
-                    letterSpacing = 1.sp
-                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "GAME OVER",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                    IconButton(
+                        onClick = onDismissToViewBoard,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .align(Alignment.CenterEnd)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "View Board",
+                            tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
+                        )
+                    }
+                }
 
                 if (isNewRecord) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -129,7 +176,34 @@ fun GameOverDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (canUndo) {
+                    FilledTonalButton(
+                        onClick = onUndoLastMove,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = if (isDarkTheme) EmptyCellDark else EmptyCellLight
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Undo,
+                            contentDescription = "Undo Last Move",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Undo Last Move",
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
 
                 // Action Buttons
                 Row(
@@ -168,13 +242,14 @@ fun GameOverDialog(
     }
 }
 
-private fun shareGameResult(context: Context, score: Int, grid: Array<Array<Tile?>>) {
+private fun shareGameResult(context: Context, score: Int, grid: List<List<Tile?>>) {
     val sb = StringBuilder()
     sb.append("🎮 I scored $score in Threes! for Android!\n\n")
     for (r in 0 until 4) {
         for (c in 0 until 4) {
-            val v = grid[r][c]?.value ?: 0
+            val v = grid.getOrNull(r)?.getOrNull(c)?.value ?: 0
             val emoji = when (v) {
+                0 -> "⬛"
                 1 -> "🟦"
                 2 -> "🟥"
                 3 -> "⬜"

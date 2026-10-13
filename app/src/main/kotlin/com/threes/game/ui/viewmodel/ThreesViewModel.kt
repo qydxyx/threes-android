@@ -1,8 +1,8 @@
 package com.threes.game.ui.viewmodel
 
 import android.app.Application
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.threes.game.audio.SoundEngine
 import com.threes.game.data.PreferencesRepository
 import com.threes.game.data.SavedGame
@@ -12,14 +12,15 @@ import com.threes.game.model.Tile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
+@Immutable
 data class GameUiState(
-    val grid: Array<Array<Tile?>> = Array(4) { Array(4) { null } },
+    val grid: List<List<Tile?>> = List(4) { List(4) { null } },
     val score: Int = 0,
     val highScore: Int = 0,
     val nextTile: Tile = Tile.create(1),
     val isGameOver: Boolean = false,
+    val isGameOverDialogDismissed: Boolean = false,
     val isNewRecord: Boolean = false,
     val canUndo: Boolean = false,
     val unlockedCharacters: Set<Int> = setOf(1, 2, 3),
@@ -37,6 +38,9 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
     private val sound = SoundEngine(application)
     private val engine = GameEngine()
 
+    private var baselineHighScore: Int = 0
+    private var hasBrokenRecordInSession: Boolean = false
+
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
@@ -50,6 +54,8 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
 
         val saved = prefs.loadGame()
         if (saved != null) {
+            baselineHighScore = saved.baselineHighScore
+            hasBrokenRecordInSession = saved.isNewRecord
             engine.restoreFromState(
                 loadedGrid = saved.grid,
                 loadedNextTile = saved.nextTile,
@@ -58,7 +64,12 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
                 loadedMaxTile = saved.maxTile,
                 loadedMoveCount = saved.moveCount
             )
+            if (engine.score > baselineHighScore) {
+                hasBrokenRecordInSession = true
+            }
         } else {
+            baselineHighScore = prefs.highScore
+            hasBrokenRecordInSession = false
             engine.startNewGame()
         }
 
@@ -69,11 +80,17 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
         return engine.getMovableLines(direction)
     }
 
+    fun getMovableCells(direction: Direction): Set<Pair<Int, Int>> {
+        return engine.getMovableCells(direction)
+    }
+
+    fun onSlideCommitStarted() {
+        sound.playSlide()
+    }
+
     fun onMove(direction: Direction) {
         val result = engine.move(direction)
         if (!result.moved) return
-
-        sound.playSlide()
 
         // Handle merged tiles: play chimes and unlock characters
         if (result.mergedTiles.isNotEmpty()) {
@@ -88,15 +105,23 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
             sound.playSnap()
         }
 
-        // Check high score
-        var newRecord = false
+        // Also unlock bonus spawned tile if applicable
+        result.spawnedTile?.let { spawned ->
+            if (spawned.value >= 6) {
+                prefs.unlockCharacter(spawned.value)
+            }
+        }
+
+        // Track high score across the entire session
+        if (engine.score > baselineHighScore) {
+            hasBrokenRecordInSession = true
+        }
         if (engine.score > prefs.highScore) {
             prefs.highScore = engine.score
-            newRecord = true
         }
 
         if (engine.isGameOver) {
-            if (newRecord) {
+            if (hasBrokenRecordInSession) {
                 sound.playNewRecord()
             } else {
                 sound.playGameOver()
@@ -106,23 +131,41 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
             saveCurrentGame()
         }
 
-        updateUiState(isNewRecord = newRecord)
+        updateUiState(isGameOverDialogDismissed = false)
     }
 
     fun onUndo() {
         if (!prefs.isUndoEnabled || !engine.canUndo()) return
         if (engine.undo()) {
             sound.playSnap()
+            if (hasBrokenRecordInSession) {
+                if (engine.score <= baselineHighScore) {
+                    hasBrokenRecordInSession = false
+                    prefs.highScore = baselineHighScore
+                } else if (engine.score < prefs.highScore) {
+                    prefs.highScore = engine.score
+                }
+            }
             saveCurrentGame()
-            updateUiState()
+            updateUiState(isGameOverDialogDismissed = false)
         }
     }
 
     fun onStartNewGame() {
+        baselineHighScore = prefs.highScore
+        hasBrokenRecordInSession = false
         engine.startNewGame()
         sound.playSnap()
         saveCurrentGame()
-        updateUiState(isNewRecord = false)
+        updateUiState(isGameOverDialogDismissed = false)
+    }
+
+    fun dismissGameOverDialog() {
+        _uiState.value = _uiState.value.copy(isGameOverDialogDismissed = true)
+    }
+
+    fun showGameOverDialog() {
+        _uiState.value = _uiState.value.copy(isGameOverDialogDismissed = false)
     }
 
     fun playCharacterVoice(value: Int) {
@@ -161,11 +204,20 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setUndoEnabled(enabled: Boolean) {
         prefs.isUndoEnabled = enabled
-        _uiState.value = _uiState.value.copy(isUndoEnabled = enabled)
+        _uiState.value = _uiState.value.copy(
+            isUndoEnabled = enabled,
+            canUndo = enabled && engine.canUndo()
+        )
     }
 
     fun resetHighScore() {
         prefs.highScore = 0
+        baselineHighScore = 0
+        hasBrokenRecordInSession = engine.score > 0
+        if (engine.score > 0) {
+            prefs.highScore = engine.score
+        }
+        saveCurrentGame()
         updateUiState()
     }
 
@@ -189,29 +241,29 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
         if (engine.isGameOver) return
         prefs.saveGame(
             SavedGame(
-                grid = engine.grid,
+                grid = engine.getGridSnapshot(),
                 nextTile = engine.nextTile,
                 deck = engine.deck.toList(),
                 score = engine.score,
                 maxTile = engine.maxTileValue,
-                moveCount = engine.moveCount
+                moveCount = engine.moveCount,
+                isNewRecord = hasBrokenRecordInSession,
+                baselineHighScore = baselineHighScore
             )
         )
     }
 
-    private fun updateUiState(isNewRecord: Boolean = false) {
-        // Create fresh deep copy of grid for Compose observation
-        val gridCopy = Array(4) { r ->
-            Array(4) { c -> engine.grid[r][c]?.copy() }
-        }
-
+    private fun updateUiState(
+        isGameOverDialogDismissed: Boolean = _uiState.value.isGameOverDialogDismissed
+    ) {
         _uiState.value = _uiState.value.copy(
-            grid = gridCopy,
+            grid = engine.getGridSnapshot(),
             score = engine.score,
             highScore = prefs.highScore,
             nextTile = engine.nextTile,
             isGameOver = engine.isGameOver,
-            isNewRecord = isNewRecord,
+            isGameOverDialogDismissed = if (engine.isGameOver) isGameOverDialogDismissed else false,
+            isNewRecord = hasBrokenRecordInSession,
             canUndo = prefs.isUndoEnabled && engine.canUndo(),
             unlockedCharacters = prefs.getUnlockedCharacters(),
             isNightMode = prefs.isNightMode,
@@ -219,5 +271,10 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
             isHapticsEnabled = prefs.isHapticsEnabled,
             isUndoEnabled = prefs.isUndoEnabled
         )
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        sound.release()
     }
 }

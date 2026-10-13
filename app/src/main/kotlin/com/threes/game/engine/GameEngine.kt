@@ -113,8 +113,19 @@ class GameEngine(
                     valCandidate *= 2
                 }
                 if (bonusCandidates.isNotEmpty()) {
-                    val bonusVal = bonusCandidates[random.nextInt(bonusCandidates.size)]
-                    return Tile.create(bonusVal, isBonus = true)
+                    val chosenIdx = random.nextInt(bonusCandidates.size)
+                    val bonusVal = bonusCandidates[chosenIdx]
+                    val hintWindow = if (bonusCandidates.size <= 3) {
+                        bonusCandidates.toList()
+                    } else {
+                        val start = (chosenIdx - 1).coerceIn(0, bonusCandidates.size - 3)
+                        bonusCandidates.subList(start, start + 3).toList()
+                    }
+                    return Tile.create(
+                        value = bonusVal,
+                        isBonus = true,
+                        bonusCandidates = hintWindow
+                    )
                 }
             }
         }
@@ -137,6 +148,34 @@ class GameEngine(
             }
         }
         return movable
+    }
+
+    /**
+     * Returns the exact set of board coordinates (row, col) whose tiles actually slide
+     * when swiping in [direction]. Stationary tiles at the front of a line that are blocked
+     * by the wall or serve as the stationary target of a merge are excluded.
+     */
+    fun getMovableCells(direction: Direction): Set<Pair<Int, Int>> {
+        val cells = mutableSetOf<Pair<Int, Int>>()
+        for (lineIdx in 0 until size) {
+            val line = getLine(direction, lineIdx)
+            val shiftResult = shiftLine(line)
+            val firstMoved = shiftResult.firstMovedIndex
+            if (shiftResult.moved && firstMoved != null) {
+                for (posInLine in firstMoved until size) {
+                    if (line[posInLine] != null) {
+                        val coord = when (direction) {
+                            Direction.LEFT -> lineIdx to posInLine
+                            Direction.RIGHT -> lineIdx to (size - 1 - posInLine)
+                            Direction.UP -> posInLine to lineIdx
+                            Direction.DOWN -> (size - 1 - posInLine) to lineIdx
+                        }
+                        cells.add(coord)
+                    }
+                }
+            }
+        }
+        return cells
     }
 
     fun move(direction: Direction): MoveResult {
@@ -195,7 +234,7 @@ class GameEngine(
         val spawnedPos: Pair<Int, Int>?
         if (spawnCandidates.isNotEmpty()) {
             spawnedPos = spawnCandidates[random.nextInt(spawnCandidates.size)]
-            val newSpawn = nextTile.copy(isNew = true)
+            val newSpawn = nextTile.copy(isNew = true, bonusCandidates = emptyList())
             grid[spawnedPos.first][spawnedPos.second] = newSpawn
             spawnedTile = newSpawn
             if (newSpawn.value > maxTileValue) {
@@ -260,7 +299,8 @@ class GameEngine(
             if (c1 != null || c2 != null || c3 != null) {
                 return LineShiftResult(
                     moved = true,
-                    newTiles = listOf(c1, c2, c3, null)
+                    newTiles = listOf(c1, c2, c3, null),
+                    firstMovedIndex = 1
                 )
             }
             return LineShiftResult(moved = false, newTiles = line)
@@ -272,6 +312,7 @@ class GameEngine(
             return LineShiftResult(
                 moved = true,
                 newTiles = listOf(merged, c2, c3, null),
+                firstMovedIndex = 1,
                 mergedIndex = 0,
                 mergedTile = merged
             )
@@ -282,7 +323,8 @@ class GameEngine(
             if (c2 != null || c3 != null) {
                 return LineShiftResult(
                     moved = true,
-                    newTiles = listOf(c0, c2, c3, null)
+                    newTiles = listOf(c0, c2, c3, null),
+                    firstMovedIndex = 2
                 )
             }
             return LineShiftResult(moved = false, newTiles = line)
@@ -294,6 +336,7 @@ class GameEngine(
             return LineShiftResult(
                 moved = true,
                 newTiles = listOf(c0, merged, c3, null),
+                firstMovedIndex = 2,
                 mergedIndex = 1,
                 mergedTile = merged
             )
@@ -304,7 +347,8 @@ class GameEngine(
             if (c3 != null) {
                 return LineShiftResult(
                     moved = true,
-                    newTiles = listOf(c0, c1, c3, null)
+                    newTiles = listOf(c0, c1, c3, null),
+                    firstMovedIndex = 3
                 )
             }
             return LineShiftResult(moved = false, newTiles = line)
@@ -316,6 +360,7 @@ class GameEngine(
             return LineShiftResult(
                 moved = true,
                 newTiles = listOf(c0, c1, merged, null),
+                firstMovedIndex = 3,
                 mergedIndex = 2,
                 mergedTile = merged
             )
@@ -362,12 +407,15 @@ class GameEngine(
         return true
     }
 
-    private fun saveSnapshot() {
-        val gridCopy = (0 until size).map { r ->
+    fun getGridSnapshot(): List<List<Tile?>> {
+        return (0 until size).map { r ->
             (0 until size).map { c -> grid[r][c]?.copy() }
         }
+    }
+
+    private fun saveSnapshot() {
         previousSnapshot = GameSnapshot(
-            grid = gridCopy,
+            grid = getGridSnapshot(),
             score = score,
             nextTile = nextTile.copy(),
             deck = deck.toList(),
@@ -377,18 +425,24 @@ class GameEngine(
     }
 
     fun restoreFromState(
-        loadedGrid: Array<Array<Tile?>>,
+        loadedGrid: List<List<Tile?>>,
         loadedNextTile: Tile,
         loadedDeck: List<Int>,
         loadedScore: Int,
         loadedMaxTile: Int,
         loadedMoveCount: Int
     ) {
+        var maxId = loadedNextTile.id
         for (r in 0 until size) {
             for (c in 0 until size) {
-                grid[r][c] = loadedGrid[r][c]
+                val tile = loadedGrid.getOrNull(r)?.getOrNull(c)
+                grid[r][c] = tile
+                if (tile != null && tile.id > maxId) {
+                    maxId = tile.id
+                }
             }
         }
+        Tile.syncMaxId(maxId)
         nextTile = loadedNextTile
         deck.clear()
         deck.addAll(loadedDeck)

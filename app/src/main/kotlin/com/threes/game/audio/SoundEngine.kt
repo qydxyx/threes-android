@@ -10,16 +10,20 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
 
 class SoundEngine(private val context: Context) {
 
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     var soundEnabled: Boolean = true
     var hapticsEnabled: Boolean = true
@@ -27,8 +31,10 @@ class SoundEngine(private val context: Context) {
     private val vibrator: Vibrator? by lazy {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vibratorManager?.defaultVibrator ?: (context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+                val vibratorManager =
+                    context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vibratorManager?.defaultVibrator
+                    ?: (context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
             } else {
                 @Suppress("DEPRECATION")
                 context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
@@ -47,17 +53,21 @@ class SoundEngine(private val context: Context) {
 
     private val sampleRate = 44100
 
-    // Audio caches for fast playback
-    private val chimeCache = mutableMapOf<Int, ByteArray>()
-    private var slideAudio: ByteArray? = null
-    private var snapAudio: ByteArray? = null
-    private var gameOverAudio: ByteArray? = null
-    private var newRecordAudio: ByteArray? = null
+    // Thread-safe audio caches for fast playback
+    private val chimeCache = ConcurrentHashMap<Int, ByteArray>()
+    @Volatile private var slideAudio: ByteArray? = null
+    @Volatile private var snapAudio: ByteArray? = null
+    @Volatile private var gameOverAudio: ByteArray? = null
+    @Volatile private var newRecordAudio: ByteArray? = null
 
     init {
         scope.launch {
             precomputeAudio()
         }
+    }
+
+    fun release() {
+        scope.cancel()
     }
 
     private fun precomputeAudio() {
@@ -124,10 +134,12 @@ class SoundEngine(private val context: Context) {
     }
 
     fun playNewRecord() {
-        if (!soundEnabled) return
-        scope.launch {
-            newRecordAudio?.let { playPcm(it) }
+        if (soundEnabled) {
+            scope.launch {
+                newRecordAudio?.let { playPcm(it) }
+            }
         }
+        vibrateNewRecord()
     }
 
     fun playCharacterVoice(value: Int) {
@@ -176,7 +188,7 @@ class SoundEngine(private val context: Context) {
             // Release after playing
             scope.launch {
                 val durationMs = (pcmData.size.toDouble() / (sampleRate * 2) * 1000).toLong() + 100
-                kotlinx.coroutines.delay(durationMs)
+                delay(durationMs)
                 try {
                     track.stop()
                     track.release()
@@ -211,12 +223,16 @@ class SoundEngine(private val context: Context) {
         val totalSamples = (sampleRate * durationSec).toInt()
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
 
+        var phase = 0.0
         for (i in 0 until totalSamples) {
             val t = i.toDouble() / sampleRate
             val progress = t / durationSec
             val envelope = sin(progress * PI) // Hanning window
-            val noise = (Math.random() * 2.0 - 1.0) * 0.15
-            val tone = sin(2.0 * PI * (300.0 + progress * 200.0) * t) * 0.1
+            val instFreq = 300.0 + progress * 200.0
+            phase += 2.0 * PI * instFreq / sampleRate
+
+            val noise = (Math.random() * 2.0 - 1.0) * 0.14
+            val tone = sin(phase) * 0.1
             val sample = (noise + tone) * envelope
 
             val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
@@ -245,11 +261,13 @@ class SoundEngine(private val context: Context) {
         val totalSamples = (sampleRate * durationSec).toInt()
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
 
+        var phase = 0.0
         for (i in 0 until totalSamples) {
             val t = i.toDouble() / sampleRate
-            val pitch = baseFreq * (1.0 + 0.3 * sin(2.0 * PI * 6.0 * t))
+            val instFreq = baseFreq * (1.0 + 0.15 * sin(2.0 * PI * 6.0 * t))
+            phase += 2.0 * PI * instFreq / sampleRate
             val env = sin(t / durationSec * PI)
-            val sample = sin(2.0 * PI * pitch * t) * env * 0.7
+            val sample = sin(phase) * env * 0.7
 
             val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
             byteBuffer.putShort(shortSample)
@@ -263,7 +281,6 @@ class SoundEngine(private val context: Context) {
         val totalSamples = (sampleRate * noteDur * notes.size).toInt()
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
 
-        var globalIndex = 0
         for (freq in notes) {
             val noteSamples = (sampleRate * noteDur).toInt()
             for (i in 0 until noteSamples) {
@@ -272,7 +289,6 @@ class SoundEngine(private val context: Context) {
                 val sample = sin(2.0 * PI * freq * t) * decay * 0.7
                 val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
                 byteBuffer.putShort(shortSample)
-                globalIndex++
             }
         }
         return byteBuffer.array()
@@ -362,6 +378,27 @@ class SoundEngine(private val context: Context) {
     fun vibrateMerge() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_HEAVY_CLICK else -1
         doVibrate(durationMs = 35, predefinedEffectId = effectId, amplitude = 180)
+    }
+
+    fun vibrateNewRecord() {
+        if (!hapticsEnabled) return
+        val v = vibrator ?: return
+        try {
+            if (!v.hasVibrator()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                v.vibrate(
+                    VibrationEffect.createWaveform(
+                        longArrayOf(0, 35, 45, 50, 45, 90),
+                        intArrayOf(0, 120, 0, 160, 0, 220),
+                        -1
+                    ),
+                    hapticAudioAttributes
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                v.vibrate(longArrayOf(0, 35, 45, 50, 45, 90), -1)
+            }
+        } catch (_: Exception) {}
     }
 
     fun vibrateGameOver() {

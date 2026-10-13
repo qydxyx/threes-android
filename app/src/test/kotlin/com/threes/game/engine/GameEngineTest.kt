@@ -72,6 +72,7 @@ class GameEngineTest {
         // Case 1: [null, 1, 2, 3] -> [1, 2, 3, null]
         val res1 = engine.shiftLine(listOf(null, t1, t2, t3a))
         assertTrue(res1.moved)
+        assertEquals(1, res1.firstMovedIndex)
         assertEquals(1, res1.newTiles[0]?.value)
         assertEquals(2, res1.newTiles[1]?.value)
         assertEquals(3, res1.newTiles[2]?.value)
@@ -80,6 +81,7 @@ class GameEngineTest {
         // Case 2: [1, 2, 3, 3] -> [3(merged), 3, 3, null]
         val res2 = engine.shiftLine(listOf(t1, t2, t3a, t3b))
         assertTrue(res2.moved)
+        assertEquals(1, res2.firstMovedIndex)
         assertEquals(3, res2.newTiles[0]?.value)
         assertEquals(3, res2.newTiles[1]?.value)
         assertEquals(3, res2.newTiles[2]?.value)
@@ -88,6 +90,7 @@ class GameEngineTest {
         // Case 3: [1, null, 2, 3] -> [1, 2, 3, null]
         val res3 = engine.shiftLine(listOf(t1, null, t2, t3a))
         assertTrue(res3.moved)
+        assertEquals(2, res3.firstMovedIndex)
         assertEquals(1, res3.newTiles[0]?.value)
         assertEquals(2, res3.newTiles[1]?.value)
         assertEquals(3, res3.newTiles[2]?.value)
@@ -96,6 +99,7 @@ class GameEngineTest {
         // Case 4: [1, 1, 2, 3] -> 1+1 no, 1+2 yes -> [1, 3(merged), 3, null]
         val res4 = engine.shiftLine(listOf(t1, t1, t2, t3a))
         assertTrue(res4.moved)
+        assertEquals(2, res4.firstMovedIndex)
         assertEquals(1, res4.newTiles[0]?.value)
         assertEquals(3, res4.newTiles[1]?.value)
         assertEquals(3, res4.newTiles[2]?.value)
@@ -104,6 +108,7 @@ class GameEngineTest {
         // Case 6: [1, 1, 3, 3] -> 1+1 no, 1+3 no, 3+3 yes -> [1, 1, 6(merged), null]
         val res5 = engine.shiftLine(listOf(t1, t1, t3a, t3b))
         assertTrue(res5.moved)
+        assertEquals(3, res5.firstMovedIndex)
         assertEquals(1, res5.newTiles[0]?.value)
         assertEquals(1, res5.newTiles[1]?.value)
         assertEquals(6, res5.newTiles[2]?.value)
@@ -112,6 +117,7 @@ class GameEngineTest {
         // Case 7: [1, 1, 1, 1] cannot move left!
         val resBlocked = engine.shiftLine(listOf(t1, t1, t1, t1))
         assertFalse(resBlocked.moved)
+        assertNull(resBlocked.firstMovedIndex)
         assertEquals(1, resBlocked.newTiles[0]?.value)
         assertEquals(1, resBlocked.newTiles[1]?.value)
         assertEquals(1, resBlocked.newTiles[2]?.value)
@@ -121,6 +127,71 @@ class GameEngineTest {
         val t12 = Tile.create(12)
         val resBlocked2 = engine.shiftLine(listOf(t1, t3a, t6, t12))
         assertFalse(resBlocked2.moved)
+        assertNull(resBlocked2.firstMovedIndex)
+    }
+
+    @Test
+    fun testGetMovableCellsPerCellGranularity() {
+        val engine = GameEngine(Random(99))
+        // Row 0: [3, 2, null, 1] -> moving LEFT: (0,0)=3 and (0,1)=2 are blocked; only (0,3)=1 moves
+        // Row 1: [3, 1, 2, 6]    -> moving LEFT: (1,0)=3 is blocked, (1,1)=1 is merge target; (1,2)=2 and (1,3)=6 move
+        // Row 2: [1, 1, 1, 1]    -> moving LEFT: completely blocked
+        // Row 3: [null, 3, null, 6] -> moving LEFT: (3,1)=3 and (3,3)=6 both move
+        val customGrid = listOf(
+            listOf(Tile.create(3), Tile.create(2), null, Tile.create(1)),
+            listOf(Tile.create(3), Tile.create(1), Tile.create(2), Tile.create(6)),
+            listOf(Tile.create(1), Tile.create(1), Tile.create(1), Tile.create(1)),
+            listOf(null, Tile.create(3), null, Tile.create(6))
+        )
+        engine.restoreFromState(
+            loadedGrid = customGrid,
+            loadedNextTile = Tile.create(2),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 24,
+            loadedMaxTile = 6,
+            loadedMoveCount = 5
+        )
+
+        val movableLeft = engine.getMovableCells(Direction.LEFT)
+        // Row 0: only (0, 3)
+        assertFalse(movableLeft.contains(0 to 0))
+        assertFalse(movableLeft.contains(0 to 1))
+        assertTrue(movableLeft.contains(0 to 3))
+
+        // Row 1: (1, 2) and (1, 3) move; (1, 0) and (1, 1) stay
+        assertFalse(movableLeft.contains(1 to 0))
+        assertFalse(movableLeft.contains(1 to 1))
+        assertTrue(movableLeft.contains(1 to 2))
+        assertTrue(movableLeft.contains(1 to 3))
+
+        // Row 2: none move
+        assertFalse(movableLeft.contains(2 to 0))
+        assertFalse(movableLeft.contains(2 to 1))
+        assertFalse(movableLeft.contains(2 to 2))
+        assertFalse(movableLeft.contains(2 to 3))
+
+        // Row 3: (3, 1) and (3, 3) move
+        assertTrue(movableLeft.contains(3 to 1))
+        assertTrue(movableLeft.contains(3 to 3))
+    }
+
+    @Test
+    fun testRestoreFromStateSyncsTileMaxId() {
+        val engine = GameEngine(Random(7))
+        val highIdTile = Tile(id = 5000L, value = 3)
+        val grid = List(4) { r ->
+            List(4) { c -> if (r == 0 && c == 0) highIdTile else null }
+        }
+        engine.restoreFromState(
+            loadedGrid = grid,
+            loadedNextTile = Tile(id = 5005L, value = 1),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 3,
+            loadedMaxTile = 3,
+            loadedMoveCount = 1
+        )
+        val newlyCreated = Tile.create(2)
+        assertTrue(newlyCreated.id > 5005L)
     }
 
     @Test

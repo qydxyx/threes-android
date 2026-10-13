@@ -1,18 +1,41 @@
 package com.threes.game.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,7 +51,16 @@ import com.threes.game.ui.components.NextTileBar
 import com.threes.game.ui.dialogs.CastBookDialog
 import com.threes.game.ui.dialogs.GameOverDialog
 import com.threes.game.ui.dialogs.SettingsDialog
-import com.threes.game.ui.theme.*
+import com.threes.game.ui.theme.BoardBackgroundDark
+import com.threes.game.ui.theme.BoardBackgroundLight
+import com.threes.game.ui.theme.BoardPlateDark
+import com.threes.game.ui.theme.Card1Bg
+import com.threes.game.ui.theme.Card2Bg
+import com.threes.game.ui.theme.EmptyCellLight
+import com.threes.game.ui.theme.TextPrimaryDark
+import com.threes.game.ui.theme.TextPrimaryLight
+import com.threes.game.ui.theme.TextSecondaryDark
+import com.threes.game.ui.theme.TextSecondaryLight
 import com.threes.game.ui.viewmodel.ThreesViewModel
 
 @Composable
@@ -144,18 +176,39 @@ fun GameScreen(
                 }
             }
 
-            // Next Tile Bar Indicator
-            NextTileBar(
-                nextTile = uiState.nextTile,
-                isDarkTheme = isDarkTheme
-            )
+            // Next Tile Bar Indicator or Out-of-Moves Banner
+            if (uiState.isGameOver && uiState.isGameOverDialogDismissed) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Card2Bg)
+                        .clickable { viewModel.showGameOverDialog() }
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "OUT OF MOVES · TAP FOR SUMMARY",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp,
+                        color = Color.White
+                    )
+                }
+            } else {
+                NextTileBar(
+                    nextTile = uiState.nextTile,
+                    isDarkTheme = isDarkTheme
+                )
+            }
 
             // Game Board Component
             GameBoardView(
                 grid = uiState.grid,
                 nextTile = uiState.nextTile,
                 onMoveRequested = { direction -> viewModel.onMove(direction) },
+                onSlideCommitStarted = { viewModel.onSlideCommitStarted() },
                 getMovableLines = { direction -> viewModel.getMovableLines(direction) },
+                getMovableCells = { direction -> viewModel.getMovableCells(direction) },
                 onDragThresholdReached = { viewModel.onDragThresholdReached() },
                 onDragBlocked = { viewModel.onDragBlocked() },
                 onSnapBack = { viewModel.onSnapBack() },
@@ -190,7 +243,13 @@ fun GameScreen(
                 }
 
                 FilledTonalButton(
-                    onClick = { showNewGameConfirm = true },
+                    onClick = {
+                        if (uiState.isGameOver) {
+                            viewModel.onStartNewGame()
+                        } else {
+                            showNewGameConfirm = true
+                        }
+                    },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = if (isDarkTheme) BoardPlateDark else EmptyCellLight
@@ -215,12 +274,15 @@ fun GameScreen(
         }
 
         // Dialog: Game Over
-        if (uiState.isGameOver) {
+        if (uiState.isGameOver && !uiState.isGameOverDialogDismissed) {
             GameOverDialog(
                 score = uiState.score,
                 highScore = uiState.highScore,
                 isNewRecord = uiState.isNewRecord,
                 grid = uiState.grid,
+                canUndo = uiState.canUndo,
+                onUndoLastMove = { viewModel.onUndo() },
+                onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
                 onPlayAgain = { viewModel.onStartNewGame() },
                 isDarkTheme = isDarkTheme
             )
