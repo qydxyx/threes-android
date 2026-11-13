@@ -1,21 +1,56 @@
 package com.threes.game.ui.dialogs
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.threes.game.ui.theme.*
+import androidx.compose.ui.window.DialogProperties
+import com.threes.game.R
+import com.threes.game.ui.theme.BoardBackgroundLight
+import com.threes.game.ui.theme.BoardPlateDark
+import com.threes.game.ui.theme.Card1Bg
+import com.threes.game.ui.theme.Card2Bg
+import com.threes.game.ui.theme.EmptyCellDark
+import com.threes.game.ui.theme.EmptyCellLight
+import com.threes.game.ui.theme.TextPrimaryDark
+import com.threes.game.ui.theme.TextPrimaryLight
+import com.threes.game.ui.theme.TextSecondaryDark
+import com.threes.game.ui.theme.TextSecondaryLight
 
 @Composable
 fun SettingsDialog(
@@ -30,11 +65,16 @@ fun SettingsDialog(
     onResetHighScore: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    var showResetConfirm by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+                .fillMaxWidth(0.90f)
+                .widthIn(max = 400.dp)
                 .shadow(12.dp, RoundedCornerShape(24.dp)),
             shape = RoundedCornerShape(24.dp),
             color = if (isNightMode) BoardPlateDark else BoardBackgroundLight
@@ -42,6 +82,7 @@ fun SettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp)
             ) {
                 Row(
@@ -50,7 +91,7 @@ fun SettingsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SETTINGS",
+                        text = stringResource(R.string.settings_title),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.sp,
@@ -59,7 +100,7 @@ fun SettingsDialog(
                     IconButton(onClick = onDismiss) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.close),
                             tint = if (isNightMode) TextSecondaryDark else TextSecondaryLight
                         )
                     }
@@ -67,48 +108,44 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Night Mode Toggle
                 SettingSwitchRow(
-                    title = "Night Threes (Dark Mode)",
+                    title = stringResource(R.string.night_mode),
                     checked = isNightMode,
                     onCheckedChange = onNightModeChange,
                     isDarkTheme = isNightMode
                 )
 
-                Divider(
+                HorizontalDivider(
                     color = if (isNightMode) EmptyCellDark else EmptyCellLight,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
 
-                // Sound Effects Toggle
                 SettingSwitchRow(
-                    title = "Sound Effects & Voices",
+                    title = stringResource(R.string.sound_effects),
                     checked = isSoundEnabled,
                     onCheckedChange = onSoundEnabledChange,
                     isDarkTheme = isNightMode
                 )
 
-                Divider(
+                HorizontalDivider(
                     color = if (isNightMode) EmptyCellDark else EmptyCellLight,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
 
-                // Haptic Feedback Toggle
                 SettingSwitchRow(
-                    title = "Haptic Vibration",
+                    title = stringResource(R.string.haptics),
                     checked = isHapticsEnabled,
                     onCheckedChange = onHapticsEnabledChange,
                     isDarkTheme = isNightMode
                 )
 
-                Divider(
+                HorizontalDivider(
                     color = if (isNightMode) EmptyCellDark else EmptyCellLight,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
 
-                // Undo Move Toggle
                 SettingSwitchRow(
-                    title = "Enable Undo Move",
+                    title = stringResource(R.string.undo_toggle),
                     checked = isUndoEnabled,
                     onCheckedChange = onUndoEnabledChange,
                     isDarkTheme = isNightMode
@@ -116,19 +153,45 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Reset High Score Button
                 OutlinedButton(
-                    onClick = onResetHighScore,
+                    onClick = { showResetConfirm = true },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = Card2Bg
                     ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text(text = "Reset High Score", fontWeight = FontWeight.Bold)
+                    Text(text = stringResource(R.string.reset_high_score), fontWeight = FontWeight.Bold)
                 }
             }
         }
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text(stringResource(R.string.reset_high_score_title)) },
+            text = { Text(stringResource(R.string.reset_high_score_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showResetConfirm = false
+                        onResetHighScore()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Card2Bg)
+                ) {
+                    Text(stringResource(R.string.reset), color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+            containerColor = if (isNightMode) BoardPlateDark else BoardBackgroundLight,
+            titleContentColor = if (isNightMode) TextPrimaryDark else TextPrimaryLight,
+            textContentColor = if (isNightMode) TextSecondaryDark else TextSecondaryLight
+        )
     }
 }
 
@@ -150,7 +213,10 @@ private fun SettingSwitchRow(
             text = title,
             fontSize = 15.sp,
             fontWeight = FontWeight.Medium,
-            color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+            color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
         )
         Switch(
             checked = checked,

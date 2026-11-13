@@ -2,6 +2,7 @@ package com.threes.game.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.threes.game.engine.GameSnapshot
 import com.threes.game.model.Tile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,10 +15,24 @@ data class SavedGame(
     val maxTile: Int,
     val moveCount: Int,
     val isNewRecord: Boolean = false,
-    val baselineHighScore: Int = 0
+    val baselineHighScore: Int = 0,
+    val previousSnapshot: GameSnapshot? = null
 )
 
-class PreferencesRepository(context: Context) {
+interface GameStorage {
+    var highScore: Int
+    var isNightMode: Boolean
+    var isSoundEnabled: Boolean
+    var isHapticsEnabled: Boolean
+    var isUndoEnabled: Boolean
+    fun getUnlockedCharacters(): Set<Int>
+    fun unlockCharacter(value: Int)
+    fun saveGame(savedGame: SavedGame)
+    fun loadGame(): SavedGame?
+    fun clearSavedGame()
+}
+
+class PreferencesRepository(context: Context) : GameStorage {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("threes_game_prefs", Context.MODE_PRIVATE)
@@ -32,7 +47,7 @@ class PreferencesRepository(context: Context) {
         private const val KEY_SAVED_GAME = "saved_game_state"
     }
 
-    var highScore: Int
+    override var highScore: Int
         get() = prefs.getInt(KEY_HIGH_SCORE, 0)
         set(value) = prefs.edit().putInt(KEY_HIGH_SCORE, value).apply()
 
@@ -44,23 +59,23 @@ class PreferencesRepository(context: Context) {
         return false
     }
 
-    var isNightMode: Boolean
+    override var isNightMode: Boolean
         get() = prefs.getBoolean(KEY_NIGHT_MODE, false)
         set(value) = prefs.edit().putBoolean(KEY_NIGHT_MODE, value).apply()
 
-    var isSoundEnabled: Boolean
+    override var isSoundEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, value).apply()
 
-    var isHapticsEnabled: Boolean
+    override var isHapticsEnabled: Boolean
         get() = prefs.getBoolean(KEY_HAPTICS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_HAPTICS_ENABLED, value).apply()
 
-    var isUndoEnabled: Boolean
+    override var isUndoEnabled: Boolean
         get() = prefs.getBoolean(KEY_UNDO_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_UNDO_ENABLED, value).apply()
 
-    fun getUnlockedCharacters(): Set<Int> {
+    override fun getUnlockedCharacters(): Set<Int> {
         val stringSet = prefs.getStringSet(
             KEY_UNLOCKED_CHARACTERS,
             setOf("1", "2", "3")
@@ -68,7 +83,7 @@ class PreferencesRepository(context: Context) {
         return stringSet.mapNotNull { it.toIntOrNull() }.toSet()
     }
 
-    fun unlockCharacter(value: Int) {
+    override fun unlockCharacter(value: Int) {
         val current = getUnlockedCharacters().toMutableSet()
         if (current.add(value)) {
             prefs.edit().putStringSet(
@@ -78,7 +93,7 @@ class PreferencesRepository(context: Context) {
         }
     }
 
-    fun saveGame(savedGame: SavedGame) {
+    override fun saveGame(savedGame: SavedGame) {
         try {
             val json = JSONObject()
             json.put("score", savedGame.score)
@@ -87,46 +102,26 @@ class PreferencesRepository(context: Context) {
             json.put("isNewRecord", savedGame.isNewRecord)
             json.put("baselineHighScore", savedGame.baselineHighScore)
 
-            // Save next tile
-            val nextJson = JSONObject()
-            nextJson.put("id", savedGame.nextTile.id)
-            nextJson.put("value", savedGame.nextTile.value)
-            nextJson.put("isBonus", savedGame.nextTile.isBonus)
-            val candidatesArr = JSONArray()
-            savedGame.nextTile.bonusCandidates.forEach { candidatesArr.put(it) }
-            nextJson.put("bonusCandidates", candidatesArr)
-            json.put("nextTile", nextJson)
+            json.put("nextTile", tileToJson(savedGame.nextTile, includeBonusCandidates = true))
+            json.put("deck", intListToJsonArray(savedGame.deck))
+            json.put("grid", gridToJsonArray(savedGame.grid))
 
-            // Save deck
-            val deckArray = JSONArray()
-            savedGame.deck.forEach { deckArray.put(it) }
-            json.put("deck", deckArray)
-
-            // Save grid
-            val gridArray = JSONArray()
-            for (r in 0 until 4) {
-                val rowArray = JSONArray()
-                for (c in 0 until 4) {
-                    val tile = savedGame.grid.getOrNull(r)?.getOrNull(c)
-                    if (tile != null) {
-                        val tileObj = JSONObject()
-                        tileObj.put("id", tile.id)
-                        tileObj.put("value", tile.value)
-                        tileObj.put("isBonus", tile.isBonus)
-                        rowArray.put(tileObj)
-                    } else {
-                        rowArray.put(JSONObject.NULL)
-                    }
-                }
-                gridArray.put(rowArray)
+            savedGame.previousSnapshot?.let { snap ->
+                val snapJson = JSONObject()
+                snapJson.put("score", snap.score)
+                snapJson.put("maxTileValue", snap.maxTileValue)
+                snapJson.put("moveCount", snap.moveCount)
+                snapJson.put("nextTile", tileToJson(snap.nextTile, includeBonusCandidates = true))
+                snapJson.put("deck", intListToJsonArray(snap.deck))
+                snapJson.put("grid", gridToJsonArray(snap.grid))
+                json.put("previousSnapshot", snapJson)
             }
-            json.put("grid", gridArray)
 
             prefs.edit().putString(KEY_SAVED_GAME, json.toString()).apply()
         } catch (_: Exception) {}
     }
 
-    fun loadGame(): SavedGame? {
+    override fun loadGame(): SavedGame? {
         val raw = prefs.getString(KEY_SAVED_GAME, null) ?: return null
         return try {
             val json = JSONObject(raw)
@@ -136,42 +131,19 @@ class PreferencesRepository(context: Context) {
             val isNewRecord = json.optBoolean("isNewRecord", false)
             val baselineHighScore = json.optInt("baselineHighScore", highScore)
 
-            val nextObj = json.getJSONObject("nextTile")
-            val candidates = mutableListOf<Int>()
-            val candidatesArr = nextObj.optJSONArray("bonusCandidates")
-            if (candidatesArr != null) {
-                for (i in 0 until candidatesArr.length()) {
-                    candidates.add(candidatesArr.getInt(i))
-                }
-            }
-            val nextTile = Tile(
-                id = nextObj.getLong("id"),
-                value = nextObj.getInt("value"),
-                isBonus = nextObj.optBoolean("isBonus", false),
-                bonusCandidates = candidates
-            )
+            val nextTile = jsonToTile(json.getJSONObject("nextTile"))
+            val deck = jsonArrayToIntList(json.getJSONArray("deck"))
+            val grid = jsonArrayToGrid(json.getJSONArray("grid"))
 
-            val deckArray = json.getJSONArray("deck")
-            val deck = mutableListOf<Int>()
-            for (i in 0 until deckArray.length()) {
-                deck.add(deckArray.getInt(i))
-            }
-
-            val gridArray = json.getJSONArray("grid")
-            val grid = (0 until 4).map { r ->
-                val rowArray = gridArray.getJSONArray(r)
-                (0 until 4).map { c ->
-                    if (!rowArray.isNull(c)) {
-                        val tileObj = rowArray.getJSONObject(c)
-                        Tile(
-                            id = tileObj.getLong("id"),
-                            value = tileObj.getInt("value"),
-                            isBonus = tileObj.optBoolean("isBonus", false)
-                        )
-                    } else {
-                        null
-                    }
-                }
+            val previousSnapshot = json.optJSONObject("previousSnapshot")?.let { snapJson ->
+                GameSnapshot(
+                    grid = jsonArrayToGrid(snapJson.getJSONArray("grid")),
+                    score = snapJson.getInt("score"),
+                    nextTile = jsonToTile(snapJson.getJSONObject("nextTile")),
+                    deck = jsonArrayToIntList(snapJson.getJSONArray("deck")),
+                    maxTileValue = snapJson.getInt("maxTileValue"),
+                    moveCount = snapJson.getInt("moveCount")
+                )
             }
 
             SavedGame(
@@ -182,14 +154,82 @@ class PreferencesRepository(context: Context) {
                 maxTile = maxTile,
                 moveCount = moveCount,
                 isNewRecord = isNewRecord,
-                baselineHighScore = baselineHighScore
+                baselineHighScore = baselineHighScore,
+                previousSnapshot = previousSnapshot
             )
         } catch (_: Exception) {
             null
         }
     }
 
-    fun clearSavedGame() {
+    override fun clearSavedGame() {
         prefs.edit().remove(KEY_SAVED_GAME).apply()
+    }
+
+    private fun tileToJson(tile: Tile, includeBonusCandidates: Boolean): JSONObject {
+        return JSONObject().apply {
+            put("id", tile.id)
+            put("value", tile.value)
+            put("isBonus", tile.isBonus)
+            if (includeBonusCandidates) {
+                put("bonusCandidates", intListToJsonArray(tile.bonusCandidates))
+            }
+        }
+    }
+
+    private fun jsonToTile(obj: JSONObject): Tile {
+        val candidates = mutableListOf<Int>()
+        val candidatesArr = obj.optJSONArray("bonusCandidates")
+        if (candidatesArr != null) {
+            for (i in 0 until candidatesArr.length()) {
+                candidates.add(candidatesArr.getInt(i))
+            }
+        }
+        return Tile(
+            id = obj.getLong("id"),
+            value = obj.getInt("value"),
+            isBonus = obj.optBoolean("isBonus", false),
+            bonusCandidates = candidates
+        )
+    }
+
+    private fun intListToJsonArray(list: List<Int>): JSONArray {
+        return JSONArray().apply {
+            list.forEach { put(it) }
+        }
+    }
+
+    private fun jsonArrayToIntList(array: JSONArray): List<Int> {
+        return (0 until array.length()).map { array.getInt(it) }
+    }
+
+    private fun gridToJsonArray(grid: List<List<Tile?>>): JSONArray {
+        val gridArray = JSONArray()
+        for (r in 0 until 4) {
+            val rowArray = JSONArray()
+            for (c in 0 until 4) {
+                val tile = grid.getOrNull(r)?.getOrNull(c)
+                if (tile != null) {
+                    rowArray.put(tileToJson(tile, includeBonusCandidates = false))
+                } else {
+                    rowArray.put(JSONObject.NULL)
+                }
+            }
+            gridArray.put(rowArray)
+        }
+        return gridArray
+    }
+
+    private fun jsonArrayToGrid(gridArray: JSONArray): List<List<Tile?>> {
+        return (0 until 4).map { r ->
+            val rowArray = gridArray.getJSONArray(r)
+            (0 until 4).map { c ->
+                if (!rowArray.isNull(c)) {
+                    jsonToTile(rowArray.getJSONObject(c))
+                } else {
+                    null
+                }
+            }
+        }
     }
 }

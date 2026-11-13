@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -11,12 +14,8 @@ android {
         applicationId = "com.threes.game"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.1.1"
-
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
-        }
+        versionCode = 10
+        versionName = "1.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -24,10 +23,52 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePropertiesFile = rootProject.file("keystore.properties")
+            val envStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
+            when {
+                !envStoreFile.isNullOrBlank() -> {
+                    val resolved = File(envStoreFile)
+                    storeFile = if (resolved.isAbsolute) resolved else rootProject.file(envStoreFile)
+                    storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                    keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                    keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                }
+                keystorePropertiesFile.exists() -> {
+                    val props = Properties().apply {
+                        keystorePropertiesFile.inputStream().use { load(it) }
+                    }
+                    val propStoreFile = props.getProperty("storeFile")
+                    if (!propStoreFile.isNullOrBlank()) {
+                        val resolved = File(propStoreFile)
+                        storeFile = if (resolved.isAbsolute) resolved else rootProject.file(propStoreFile)
+                    }
+                    storePassword = props.getProperty("storePassword")
+                    keyAlias = props.getProperty("keyAlias")
+                    keyPassword = props.getProperty("keyPassword")
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            val releaseSigning = signingConfigs.getByName("release")
+            val hasValidReleaseKey = releaseSigning.storeFile?.exists() == true &&
+                !releaseSigning.storePassword.isNullOrBlank() &&
+                !releaseSigning.keyAlias.isNullOrBlank() &&
+                !releaseSigning.keyPassword.isNullOrBlank()
+            signingConfig = when {
+                hasValidReleaseKey -> releaseSigning
+                project.hasProperty("requireReleaseSigning") -> throw GradleException(
+                    "Release signing configuration is missing or incomplete. " +
+                        "Provide ANDROID_KEYSTORE_PATH/PASSWORD/ALIAS env vars or root keystore.properties."
+                )
+                else -> signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -52,6 +93,12 @@ android {
         unitTests {
             isIncludeAndroidResources = true
             isReturnDefaultValues = true
+            all {
+                it.testLogging {
+                    events("passed", "skipped", "failed")
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                }
+            }
         }
     }
 
@@ -86,17 +133,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation(files(layout.buildDirectory.dir("tmp/kotlin-classes/debug")))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    if (name.contains("UnitTest")) {
-        libraries.from(files(layout.buildDirectory.dir("tmp/kotlin-classes/debug")))
-    }
 }

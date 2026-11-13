@@ -45,6 +45,9 @@ class GameEngine(
     var isGameOver: Boolean = false
         private set
 
+    var lastMoveDirection: Direction? = null
+        private set
+
     private var previousSnapshot: GameSnapshot? = null
 
     init {
@@ -58,6 +61,7 @@ class GameEngine(
         maxTileValue = 3
         moveCount = 0
         previousSnapshot = null
+        lastMoveDirection = null
 
         // Choose 9 random positions out of 16
         val allPositions = mutableListOf<Pair<Int, Int>>()
@@ -247,6 +251,7 @@ class GameEngine(
         }
 
         moveCount++
+        lastMoveDirection = direction
         recalculateScore()
         isGameOver = checkGameOver()
 
@@ -389,11 +394,19 @@ class GameEngine(
 
     fun canUndo(): Boolean = previousSnapshot != null
 
+    fun getUndoSnapshot(): GameSnapshot? = previousSnapshot?.let { snap ->
+        snap.copy(
+            grid = snap.grid.map { row -> row.map { it?.copy() } },
+            nextTile = snap.nextTile.copy(),
+            deck = snap.deck.toList()
+        )
+    }
+
     fun undo(): Boolean {
         val snapshot = previousSnapshot ?: return false
         for (r in 0 until size) {
             for (c in 0 until size) {
-                grid[r][c] = snapshot.grid[r][c]
+                grid[r][c] = snapshot.grid[r][c]?.copy(isMerged = false, isNew = false)
             }
         }
         score = snapshot.score
@@ -403,6 +416,7 @@ class GameEngine(
         maxTileValue = snapshot.maxTileValue
         moveCount = snapshot.moveCount
         previousSnapshot = null
+        lastMoveDirection = null
         isGameOver = checkGameOver()
         return true
     }
@@ -415,7 +429,9 @@ class GameEngine(
 
     private fun saveSnapshot() {
         previousSnapshot = GameSnapshot(
-            grid = getGridSnapshot(),
+            grid = (0 until size).map { r ->
+                (0 until size).map { c -> grid[r][c]?.copy(isMerged = false, isNew = false) }
+            },
             score = score,
             nextTile = nextTile.copy(),
             deck = deck.toList(),
@@ -430,7 +446,8 @@ class GameEngine(
         loadedDeck: List<Int>,
         loadedScore: Int,
         loadedMaxTile: Int,
-        loadedMoveCount: Int
+        loadedMoveCount: Int,
+        loadedPreviousSnapshot: GameSnapshot? = null
     ) {
         var maxId = loadedNextTile.id
         for (r in 0 until size) {
@@ -442,6 +459,16 @@ class GameEngine(
                 }
             }
         }
+        loadedPreviousSnapshot?.let { snap ->
+            if (snap.nextTile.id > maxId) maxId = snap.nextTile.id
+            snap.grid.forEach { row ->
+                row.forEach { tile ->
+                    if (tile != null && tile.id > maxId) {
+                        maxId = tile.id
+                    }
+                }
+            }
+        }
         Tile.syncMaxId(maxId)
         nextTile = loadedNextTile
         deck.clear()
@@ -449,7 +476,8 @@ class GameEngine(
         score = loadedScore
         maxTileValue = loadedMaxTile
         moveCount = loadedMoveCount
-        previousSnapshot = null
+        previousSnapshot = loadedPreviousSnapshot
+        lastMoveDirection = null
         isGameOver = checkGameOver()
     }
 }

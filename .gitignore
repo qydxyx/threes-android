@@ -10,3 +10,7 @@
 .cxx
 *.apk
 *.aab
+*.jks
+*.keystore
+*.p12
+/keystore.properties

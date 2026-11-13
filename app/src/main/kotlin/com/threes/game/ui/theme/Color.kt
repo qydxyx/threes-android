@@ -26,6 +26,7 @@ val Card2Edge = Color(0xFFDD374D)
 val Card2Text = Color(0xFFFFFFFF)
 
 val Card3Bg = Color(0xFFFFFFFF)
+val Card3BgDark = Color(0xFFFAF6EE)
 val Card3Edge = Color(0xFFD2CBC0)
 val Card3Text = Color(0xFF2E3133)
 
@@ -33,6 +34,7 @@ val Card3Text = Color(0xFF2E3133)
 val NextHint1 = Color(0xFF5DAEF6)
 val NextHint2 = Color(0xFFFF586E)
 val NextHint3 = Color(0xFFFFFFFF)
+val NextHint3Dark = Color(0xFFFAF6EE)
 val NextHintBonus = Color(0xFFFF9D24)
 
 // Character Specific Accents

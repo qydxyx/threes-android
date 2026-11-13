@@ -1,26 +1,29 @@
 package com.threes.game.ui.components
 
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -31,11 +34,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.threes.game.model.Direction
 import com.threes.game.model.Tile
 import com.threes.game.ui.theme.BoardPlateDark
@@ -43,6 +48,7 @@ import com.threes.game.ui.theme.BoardPlateLight
 import com.threes.game.ui.theme.NextHint1
 import com.threes.game.ui.theme.NextHint2
 import com.threes.game.ui.theme.NextHint3
+import com.threes.game.ui.theme.NextHint3Dark
 import com.threes.game.ui.theme.NextHintBonus
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -52,6 +58,7 @@ import kotlin.math.abs
 fun GameBoardView(
     grid: List<List<Tile?>>,
     nextTile: Tile,
+    lastMoveDirection: Direction? = null,
     onMoveRequested: (Direction) -> Unit,
     onSlideCommitStarted: () -> Unit = {},
     getMovableLines: (Direction) -> List<Int>,
@@ -64,23 +71,20 @@ fun GameBoardView(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    // Backed by MutableFloatState so pointerInput(Unit) always reads the live measured cell width
-    // rather than capturing the unmeasured initial fallback value.
-    var cellSizePx by remember { mutableFloatStateOf(250f) }
+    // Live measured width of a single inner grid cell (inside outer 16.dp and inner 8.dp padding).
+    val cellSizePxState = remember { mutableFloatStateOf(250f) }
 
     // Synchronous float state for 120Hz/240Hz finger tracking — read ONLY inside graphicsLayer
     // lambdas so drag movement never triggers Composable recomposition or relayout.
     val dragOffsetPx = remember { mutableFloatStateOf(0f) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
+    var settleToken by remember { mutableIntStateOf(0) }
+    var pendingCommitDir by remember { mutableStateOf<Direction?>(null) }
 
     var activeDirection by remember { mutableStateOf<Direction?>(null) }
     var movableLineIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var movableCells by remember { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
-    var totalDragAccumulator by remember { mutableStateOf(Offset.Zero) }
-    var dragOriginOffset by remember { mutableStateOf(Offset.Zero) }
-    var isDragLocked by remember { mutableStateOf(false) }
     var hasReachedThreshold by remember { mutableStateOf(false) }
-    var isCommittingMove by remember { mutableStateOf(false) }
 
     val currentOnMoveRequested by rememberUpdatedState(onMoveRequested)
     val currentOnSlideCommitStarted by rememberUpdatedState(onSlideCommitStarted)
@@ -106,283 +110,390 @@ fun GameBoardView(
         nextTile.isBonus -> NextHintBonus
         nextTile.isOne -> NextHint1
         nextTile.isTwo -> NextHint2
-        else -> if (isDarkTheme) Color(0xFFFAF6EE) else NextHint3
+        else -> if (isDarkTheme) NextHint3Dark else NextHint3
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .padding(16.dp)
-            .shadow(6.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp))
-            .background(if (isDarkTheme) BoardPlateDark else BoardPlateLight)
-            .onSizeChanged { size ->
-                if (size.width > 0) {
-                    cellSizePx = size.width / 4f
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = {
-                        if (isCommittingMove) return@detectDragGestures
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        val boardSide = minOf(maxWidth, maxHeight)
+
+        Box(
+            modifier = Modifier
+                .size(boardSide)
+                .padding(16.dp)
+                .shadow(6.dp, RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(if (isDarkTheme) BoardPlateDark else BoardPlateLight)
+                .pointerInput(Unit) {
+                    val velocityTracker = VelocityTracker()
+                    val lockThresholdPx = SwipePhysics.LOCK_THRESHOLD_DP.dp.toPx()
+                    val flickUpThresholdPx = SwipePhysics.FLICK_UP_THRESHOLD_DP.dp.toPx()
+                    val blockedRecheckMaxPx = SwipePhysics.BLOCKED_RECHECK_MAX_DP.dp.toPx()
+                    val blockedHapticMinPx = SwipePhysics.BLOCKED_HAPTIC_MIN_DP.dp.toPx()
+                    val blockedRecheckMinPerpPx = 4.dp.toPx()
+                    val snapHapticMinPx = SwipePhysics.SNAP_HAPTIC_MIN_DP.dp.toPx()
+                    val flickVelocityThresholdPxPerSec =
+                        SwipePhysics.FLICK_VELOCITY_DP_PER_SEC.dp.toPx()
+
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+
+                        // Invalidate any in-flight settle/snap animation before touching shared state
+                        settleToken++
                         settleJob?.cancel()
+                        settleJob = null
+
+                        // If the previous swipe's short commit slide-out was still animating,
+                        // flush the state commit immediately so rapid back-to-back swipes never stall.
+                        pendingCommitDir?.let { committedDir ->
+                            pendingCommitDir = null
+                            currentOnMoveRequested(committedDir)
+                        }
+
                         dragOffsetPx.floatValue = 0f
-                        totalDragAccumulator = Offset.Zero
-                        dragOriginOffset = Offset.Zero
-                        isDragLocked = false
                         activeDirection = null
                         movableLineIndices = emptyList()
                         movableCells = emptySet()
                         hasReachedThreshold = false
-                    },
-                    onDragEnd = {
-                        if (isCommittingMove) return@detectDragGestures
-                        val currentDir = activeDirection
-                        val currentOffset = dragOffsetPx.floatValue
-                        val hasMovable = movableCells.isNotEmpty()
-                        val liveCellSize = cellSizePx
 
-                        settleJob?.cancel()
-                        settleJob = coroutineScope.launch {
-                            if (currentDir != null && hasMovable && abs(currentOffset) >= liveCellSize * 0.38f) {
-                                isCommittingMove = true
-                                currentOnSlideCommitStarted()
-                                val targetFullSlide = if (currentOffset < 0f) -liveCellSize else liveCellSize
-                                val remainingFraction =
-                                    (1f - (abs(currentOffset) / liveCellSize)).coerceIn(0f, 1f)
-                                val animDurationMs = (55f * remainingFraction).toInt().coerceIn(16, 60)
-                                animate(
-                                    initialValue = currentOffset,
-                                    targetValue = targetFullSlide,
-                                    animationSpec = tween(
-                                        durationMillis = animDurationMs,
-                                        easing = FastOutLinearInEasing
-                                    )
-                                ) { value, _ ->
-                                    dragOffsetPx.floatValue = value
-                                }
-                                currentOnMoveRequested(currentDir)
-                                dragOffsetPx.floatValue = 0f
-                                isCommittingMove = false
-                            } else {
-                                if (hasMovable && abs(currentOffset) > 10f) {
-                                    currentOnSnapBack()
-                                }
-                                animate(
-                                    initialValue = currentOffset,
-                                    targetValue = 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMedium
-                                    )
-                                ) { value, _ ->
-                                    dragOffsetPx.floatValue = value
-                                }
-                            }
-                            activeDirection = null
-                            isDragLocked = false
-                            movableLineIndices = emptyList()
-                            movableCells = emptySet()
-                            hasReachedThreshold = false
-                        }
-                    },
-                    onDragCancel = {
-                        if (isCommittingMove) return@detectDragGestures
-                        settleJob?.cancel()
-                        settleJob = coroutineScope.launch {
-                            animate(
-                                initialValue = dragOffsetPx.floatValue,
-                                targetValue = 0f,
-                                animationSpec = tween(durationMillis = 80)
-                            ) { value, _ ->
-                                dragOffsetPx.floatValue = value
-                            }
-                            activeDirection = null
-                            isDragLocked = false
-                            movableLineIndices = emptyList()
-                            movableCells = emptySet()
-                            hasReachedThreshold = false
-                        }
-                    },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        if (isCommittingMove) return@detectDragGestures
-                        totalDragAccumulator += dragAmount
+                        velocityTracker.resetTracking()
+                        velocityTracker.addPosition(down.uptimeMillis, down.position)
 
-                        if (!isDragLocked) {
-                            val dx = totalDragAccumulator.x
-                            val dy = totalDragAccumulator.y
-                            val dist = totalDragAccumulator.getDistance()
+                        var lockedDir: Direction? = null
+                        var lockOriginPx = 0f
+                        var lockedCells: Set<Pair<Int, Int>> = emptySet()
+                        var hasNotifiedBlocked = false
+                        var finishedNormally = false
 
-                            // detectDragGestures already waits for touch slop, so lock direction immediately
-                            if (dist > 2f) {
-                                isDragLocked = true
-                                dragOriginOffset = totalDragAccumulator
-                                val dir = if (abs(dx) > abs(dy)) {
-                                    if (dx > 0) Direction.RIGHT else Direction.LEFT
-                                } else {
-                                    if (dy > 0) Direction.DOWN else Direction.UP
-                                }
+                        fun tryLockAndUpdate(delta: Offset, minLockPx: Float, isUp: Boolean) {
+                            val liveCellSize = cellSizePxState.floatValue.coerceAtLeast(1f)
+                            if (lockedDir == null && delta.getDistance() >= minLockPx) {
+                                val dir = SwipePhysics.detectDirection(delta.x, delta.y)
+                                lockedDir = dir
+                                lockOriginPx = SwipePhysics.computeLockOrigin(
+                                    dx = delta.x,
+                                    dy = delta.y,
+                                    dir = dir,
+                                    maxOriginPx = lockThresholdPx
+                                )
                                 activeDirection = dir
                                 val lines = currentGetMovableLines(dir)
                                 val cells = currentGetMovableCells(dir)
+                                lockedCells = cells
                                 movableLineIndices = lines
                                 movableCells = cells
-                                if (cells.isEmpty()) {
+                            }
+
+                            val currentLocked = lockedDir
+                            if (currentLocked != null && lockedCells.isEmpty() && !hasNotifiedBlocked) {
+                                val currentForward = (
+                                    SwipePhysics.signedAxisDelta(
+                                        delta.x,
+                                        delta.y,
+                                        currentLocked
+                                    ) - lockOriginPx
+                                    ).coerceAtLeast(0f)
+                                val recheckDir = SwipePhysics.shouldRecheckBlockedDirection(
+                                    dx = delta.x,
+                                    dy = delta.y,
+                                    currentDir = currentLocked,
+                                    forwardPx = currentForward,
+                                    recheckMaxDistPx = blockedRecheckMaxPx,
+                                    blockedHapticMinPx = blockedHapticMinPx,
+                                    minPerpPx = blockedRecheckMinPerpPx
+                                )
+                                if (recheckDir != null) {
+                                    val candidateCells = currentGetMovableCells(recheckDir)
+                                    if (candidateCells.isNotEmpty()) {
+                                        lockedDir = recheckDir
+                                        lockOriginPx = SwipePhysics.computeLockOrigin(
+                                            dx = delta.x,
+                                            dy = delta.y,
+                                            dir = recheckDir,
+                                            maxOriginPx = lockThresholdPx
+                                        )
+                                        activeDirection = recheckDir
+                                        movableLineIndices = currentGetMovableLines(recheckDir)
+                                        movableCells = candidateCells
+                                        lockedCells = candidateCells
+                                    }
+                                }
+                            }
+
+                            val dir = lockedDir
+                            if (dir != null) {
+                                val hasMovable = lockedCells.isNotEmpty()
+                                val forwardPx = (
+                                    SwipePhysics.signedAxisDelta(delta.x, delta.y, dir) -
+                                        lockOriginPx
+                                    ).coerceAtLeast(0f)
+
+                                if (!hasMovable &&
+                                    !hasNotifiedBlocked &&
+                                    (isUp || forwardPx >= blockedHapticMinPx)
+                                ) {
+                                    hasNotifiedBlocked = true
                                     currentOnDragBlocked()
                                 }
+
+                                val targetOffset = SwipePhysics.computeVisualDragOffset(
+                                    forwardPx = forwardPx,
+                                    cellSizePx = liveCellSize,
+                                    hasMovable = hasMovable,
+                                    dir = dir
+                                )
+
+                                if (hasMovable) {
+                                    val progress = abs(targetOffset) / liveCellSize
+                                    val nextThresholdState = if (hasReachedThreshold) {
+                                        progress >= SwipePhysics.UNLATCH_FRACTION
+                                    } else {
+                                        progress >= SwipePhysics.COMMIT_FRACTION
+                                    }
+                                    if (nextThresholdState != hasReachedThreshold) {
+                                        hasReachedThreshold = nextThresholdState
+                                        currentOnDragThresholdReached()
+                                    }
+                                }
+                                dragOffsetPx.floatValue = targetOffset
                             }
                         }
 
-                        if (isDragLocked && activeDirection != null) {
-                            val dir = activeDirection!!
-                            val hasMovable = movableCells.isNotEmpty()
-                            val liveCellSize = cellSizePx
-                            val effectiveDelta = totalDragAccumulator - dragOriginOffset
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
-                            val rawDelta = when (dir) {
-                                Direction.LEFT -> effectiveDelta.x.coerceIn(-liveCellSize, 0f)
-                                Direction.RIGHT -> effectiveDelta.x.coerceIn(0f, liveCellSize)
-                                Direction.UP -> effectiveDelta.y.coerceIn(-liveCellSize, 0f)
-                                Direction.DOWN -> effectiveDelta.y.coerceIn(0f, liveCellSize)
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            val delta = change.position - down.position
+
+                            if (change.changedToUpIgnoreConsumed()) {
+                                change.consume()
+                                tryLockAndUpdate(delta, flickUpThresholdPx, isUp = true)
+                                finishedNormally = true
+                                break
                             }
 
-                            val targetOffset = if (hasMovable) {
-                                rawDelta
-                            } else {
-                                rawDelta * 0.18f
+                            if (change.isConsumed) {
+                                break
                             }
 
-                            if (hasMovable) {
-                                val isPastThreshold = abs(targetOffset) >= liveCellSize * 0.38f
-                                if (isPastThreshold != hasReachedThreshold) {
-                                    hasReachedThreshold = isPastThreshold
-                                    currentOnDragThresholdReached()
+                            tryLockAndUpdate(delta, lockThresholdPx, isUp = false)
+                            if (lockedDir != null) {
+                                change.consume()
+                            }
+                        }
+
+                        val currentDir = lockedDir
+                        val currentOffset = dragOffsetPx.floatValue
+                        val hasMovable = lockedCells.isNotEmpty()
+                        val liveCellSize = cellSizePxState.floatValue.coerceAtLeast(1f)
+                        val velocity = velocityTracker.calculateVelocity()
+                        val axisVelocity = when (currentDir) {
+                            Direction.LEFT -> -velocity.x
+                            Direction.RIGHT -> velocity.x
+                            Direction.UP -> -velocity.y
+                            Direction.DOWN -> velocity.y
+                            null -> 0f
+                        }
+
+                        val flickMinDistancePx =
+                            maxOf(flickUpThresholdPx, liveCellSize * SwipePhysics.FLICK_MIN_FRACTION)
+                        val shouldCommit = currentDir != null && SwipePhysics.shouldCommitMove(
+                            finishedNormally = finishedNormally,
+                            hasMovable = hasMovable,
+                            offsetPx = currentOffset,
+                            cellSizePx = liveCellSize,
+                            axisVelocityPxPerSec = axisVelocity,
+                            flickVelocityThresholdPxPerSec = flickVelocityThresholdPxPerSec,
+                            flickMinDistancePx = flickMinDistancePx
+                        )
+
+                        val myToken = ++settleToken
+                        settleJob = coroutineScope.launch {
+                            try {
+                                if (shouldCommit && currentDir != null) {
+                                    pendingCommitDir = currentDir
+                                    currentOnSlideCommitStarted()
+                                    val targetFullSlide = when (currentDir) {
+                                        Direction.LEFT, Direction.UP -> -liveCellSize
+                                        Direction.RIGHT, Direction.DOWN -> liveCellSize
+                                    }
+                                    val distancePx = abs(targetFullSlide - currentOffset)
+                                    val animDurationMs = SwipePhysics.computeCommitAnimDurationMs(
+                                        distancePx = distancePx,
+                                        cellSizePx = liveCellSize,
+                                        axisVelocityPxPerSec = axisVelocity
+                                    )
+                                    animate(
+                                        initialValue = currentOffset,
+                                        targetValue = targetFullSlide,
+                                        animationSpec = tween(
+                                            durationMillis = animDurationMs,
+                                            easing = LinearOutSlowInEasing
+                                        )
+                                    ) { value, _ ->
+                                        if (myToken == settleToken) {
+                                            dragOffsetPx.floatValue = value
+                                        }
+                                    }
+                                    if (myToken == settleToken && pendingCommitDir == currentDir) {
+                                        pendingCommitDir = null
+                                        currentOnMoveRequested(currentDir)
+                                        dragOffsetPx.floatValue = 0f
+                                    }
+                                } else {
+                                    if (hasMovable && abs(currentOffset) > snapHapticMinPx) {
+                                        currentOnSnapBack()
+                                    }
+                                    val releaseVelocity = when {
+                                        currentDir == null -> 0f
+                                        currentDir.isHorizontal -> velocity.x
+                                        else -> velocity.y
+                                    }.coerceIn(-6000f, 6000f)
+                                    animate(
+                                        initialValue = currentOffset,
+                                        targetValue = 0f,
+                                        initialVelocity = releaseVelocity,
+                                        animationSpec = spring(
+                                            dampingRatio = 0.90f,
+                                            stiffness = 3800f,
+                                            visibilityThreshold = 0.75f
+                                        )
+                                    ) { value, _ ->
+                                        if (myToken == settleToken) {
+                                            dragOffsetPx.floatValue = value
+                                        }
+                                    }
+                                }
+                            } finally {
+                                if (myToken == settleToken) {
+                                    pendingCommitDir = null
+                                    activeDirection = null
+                                    movableLineIndices = emptyList()
+                                    movableCells = emptySet()
+                                    hasReachedThreshold = false
                                 }
                             }
-
-                            // Synchronous update on UI thread — zero coroutine launch overhead
-                            dragOffsetPx.floatValue = targetOffset
                         }
                     }
-                )
-            }
-            .padding(8.dp)
-    ) {
-        // Layer 1: Stationary 4x4 Empty Cell Recesses
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceEvenly
+                }
+                .padding(8.dp)
         ) {
-            for (r in 0 until 4) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    for (c in 0 until 4) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            EmptyCellSlot(isDarkTheme = isDarkTheme)
+            // Layer 1: Stationary 4x4 Empty Cell Recesses
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
+                for (r in 0 until 4) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        for (c in 0 until 4) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                EmptyCellSlot(isDarkTheme = isDarkTheme)
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Layer 2: Incoming Card Edge Peeking & Active Tiles
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceEvenly
-        ) {
-            for (r in 0 until 4) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    for (c in 0 until 4) {
-                        val tile = grid.getOrNull(r)?.getOrNull(c)
-                        val dir = activeDirection
-                        val isAllBlocked = dir != null && movableCells.isEmpty()
-                        val isCellMovable = dir != null && movableCells.contains(r to c)
-                        val translateHoriz = dir?.isHorizontal == true && (isCellMovable || isAllBlocked)
-                        val translateVert = dir?.isVertical == true && (isCellMovable || isAllBlocked)
+            // Layer 2: Flat Z-Indexed Overlay for Incoming Edge Peeks & Active Tiles
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val density = LocalDensity.current
+                val cellDp = maxWidth / 4f
+                val cellPx = with(density) { cellDp.toPx() }.coerceAtLeast(1f)
+                SideEffect {
+                    cellSizePxState.floatValue = cellPx
+                }
 
-                        val isSpawnEdgeCandidate = when (dir) {
-                            Direction.LEFT -> c == 3 && movableLineIndices.contains(r)
-                            Direction.RIGHT -> c == 0 && movableLineIndices.contains(r)
-                            Direction.UP -> r == 3 && movableLineIndices.contains(c)
-                            Direction.DOWN -> r == 0 && movableLineIndices.contains(c)
-                            null -> false
+                val dir = activeDirection
+
+                // Incoming card edge peek previews
+                if (dir != null && movableCells.isNotEmpty()) {
+                    for (lineIdx in movableLineIndices) {
+                        val (spawnR, spawnC) = when (dir) {
+                            Direction.LEFT -> lineIdx to 3
+                            Direction.RIGHT -> lineIdx to 0
+                            Direction.UP -> 3 to lineIdx
+                            Direction.DOWN -> 0 to lineIdx
                         }
-
                         Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Subtle incoming card edge peek — reads dragOffsetPx ONLY inside graphicsLayer
-                            if (isSpawnEdgeCandidate) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(6.dp)
-                                        .graphicsLayer {
-                                            val liveCell = cellSizePx.coerceAtLeast(1f)
-                                            val progress =
-                                                (abs(dragOffsetPx.floatValue) / liveCell).coerceIn(0f, 1f)
-                                            if (progress > 0.2f) {
-                                                val peekFraction = ((progress - 0.2f) / 0.8f).coerceIn(0f, 1f)
-                                                val peekShift = (1f - peekFraction * 0.38f) * liveCell
-                                                translationX = when (dir) {
-                                                    Direction.LEFT -> peekShift
-                                                    Direction.RIGHT -> -peekShift
-                                                    else -> 0f
-                                                }
-                                                translationY = when (dir) {
-                                                    Direction.UP -> peekShift
-                                                    Direction.DOWN -> -peekShift
-                                                    else -> 0f
-                                                }
-                                                alpha = peekFraction * 0.55f
-                                            } else {
-                                                alpha = 0f
-                                            }
+                                .size(cellDp)
+                                .zIndex(-1f)
+                                .graphicsLayer {
+                                    val progress =
+                                        (abs(dragOffsetPx.floatValue) / cellPx).coerceIn(0f, 1f)
+                                    val baseX = spawnC * cellPx
+                                    val baseY = spawnR * cellPx
+                                    if (progress > 0.15f) {
+                                        val peekFraction = ((progress - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                                        val peekShift = (1f - peekFraction * 0.38f) * cellPx
+                                        translationX = baseX + when (dir) {
+                                            Direction.LEFT -> peekShift
+                                            Direction.RIGHT -> -peekShift
+                                            else -> 0f
                                         }
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(nextPeekColor)
-                                )
-                            }
-
-                            if (tile != null) {
-                                key(tile.id) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .graphicsLayer {
-                                                val offset = dragOffsetPx.floatValue
-                                                translationX = if (translateHoriz) offset else 0f
-                                                translationY = if (translateVert) offset else 0f
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        TileView(
-                                            tile = tile,
-                                            isDarkTheme = isDarkTheme,
-                                            lookOffsetX = lookOffsetX,
-                                            lookOffsetY = lookOffsetY
-                                        )
+                                        translationY = baseY + when (dir) {
+                                            Direction.UP -> peekShift
+                                            Direction.DOWN -> -peekShift
+                                            else -> 0f
+                                        }
+                                        alpha = peekFraction * 0.55f
+                                    } else {
+                                        translationX = baseX
+                                        translationY = baseY
+                                        alpha = 0f
                                     }
                                 }
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(nextPeekColor)
+                        )
+                    }
+                }
+
+                // Active tiles keyed by tile.id across the whole board so sliding between cells
+                // never destroys/recreates TileView or resets blinking state.
+                val isAllBlocked = dir != null && movableCells.isEmpty()
+                for (r in 0 until 4) {
+                    for (c in 0 until 4) {
+                        val tile = grid.getOrNull(r)?.getOrNull(c) ?: continue
+                        key(tile.id) {
+                            val isCellMovable = dir != null && movableCells.contains(r to c)
+                            val translateHoriz = dir?.isHorizontal == true && (isCellMovable || isAllBlocked)
+                            val translateVert = dir?.isVertical == true && (isCellMovable || isAllBlocked)
+                            val tileZIndex = if (isCellMovable || isAllBlocked) 1f else 0f
+
+                            Box(
+                                modifier = Modifier
+                                    .size(cellDp)
+                                    .zIndex(tileZIndex)
+                                    .graphicsLayer {
+                                        val offset = dragOffsetPx.floatValue
+                                        translationX = c * cellPx + if (translateHoriz) offset else 0f
+                                        translationY = r * cellPx + if (translateVert) offset else 0f
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                TileView(
+                                    tile = tile,
+                                    isDarkTheme = isDarkTheme,
+                                    lookOffsetX = lookOffsetX,
+                                    lookOffsetY = lookOffsetY,
+                                    spawnFromDirection = lastMoveDirection,
+                                    cellSizePx = cellPx
+                                )
                             }
                         }
                     }

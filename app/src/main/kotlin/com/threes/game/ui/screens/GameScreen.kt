@@ -4,18 +4,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Refresh
@@ -40,12 +44,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.threes.game.R
 import com.threes.game.ui.components.GameBoardView
 import com.threes.game.ui.components.NextTileBar
 import com.threes.game.ui.dialogs.CastBookDialog
@@ -61,6 +67,7 @@ import com.threes.game.ui.theme.TextPrimaryDark
 import com.threes.game.ui.theme.TextPrimaryLight
 import com.threes.game.ui.theme.TextSecondaryDark
 import com.threes.game.ui.theme.TextSecondaryLight
+import com.threes.game.ui.viewmodel.GameUiState
 import com.threes.game.ui.viewmodel.ThreesViewModel
 
 @Composable
@@ -77,197 +84,134 @@ fun GameScreen(
         modifier = modifier
             .fillMaxSize()
             .background(if (isDarkTheme) BoardBackgroundDark else BoardBackgroundLight)
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            .safeDrawingPadding()
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // Top Bar: Settings, Logo, Cast Book
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = { viewModel.openSettings() },
-                    modifier = Modifier.size(44.dp)
+            val isWideLayout = maxWidth > maxHeight * 1.15f
+            val availableHeight = maxHeight
+
+            if (isWideLayout) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
+                    Column(
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState())
+                            .heightIn(min = availableHeight),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TopHeaderBar(
+                            isDarkTheme = isDarkTheme,
+                            onOpenSettings = { viewModel.openSettings() },
+                            onOpenCastBook = { viewModel.openCastBook() }
+                        )
+                        ScoreDashboard(
+                            score = uiState.score,
+                            highScore = uiState.highScore,
+                            isDarkTheme = isDarkTheme
+                        )
+                        NextOrGameOverBanner(
+                            uiState = uiState,
+                            isDarkTheme = isDarkTheme,
+                            onShowGameOver = { viewModel.showGameOverDialog() }
+                        )
+                        BottomActionBar(
+                            uiState = uiState,
+                            isDarkTheme = isDarkTheme,
+                            onUndo = { viewModel.onUndo() },
+                            onNewGameClick = {
+                                if (uiState.isGameOver) {
+                                    viewModel.onStartNewGame()
+                                } else {
+                                    showNewGameConfirm = true
+                                }
+                            }
+                        )
+                    }
 
-                // Styled THREES! Logo
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = Card1Bg)) { append("T") }
-                        withStyle(SpanStyle(color = Card2Bg)) { append("H") }
-                        withStyle(SpanStyle(color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight)) {
-                            append("REES!")
-                        }
-                    },
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.sp
-                )
-
-                IconButton(
-                    onClick = { viewModel.openCastBook() },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        Icons.Default.AutoStories,
-                        contentDescription = "The Cast",
-                        tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-            }
-
-            // Score Dashboard Area
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                Column {
-                    Text(
-                        text = "SCORE",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp,
-                        color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
-                    )
-                    Text(
-                        text = uiState.score.toString(),
-                        fontSize = 38.sp,
-                        fontWeight = FontWeight.Black,
-                        color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
-                        letterSpacing = (-0.5).sp
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "BEST",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp,
-                        color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
-                    )
-                    Text(
-                        text = uiState.highScore.toString(),
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
-                    )
-                }
-            }
-
-            // Next Tile Bar Indicator or Out-of-Moves Banner
-            if (uiState.isGameOver && uiState.isGameOverDialogDismissed) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Card2Bg)
-                        .clickable { viewModel.showGameOverDialog() }
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "OUT OF MOVES · TAP FOR SUMMARY",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.sp,
-                        color = Color.White
-                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        GameBoardView(
+                            grid = uiState.grid,
+                            nextTile = uiState.nextTile,
+                            lastMoveDirection = uiState.lastMoveDirection,
+                            onMoveRequested = { direction -> viewModel.onMove(direction) },
+                            onSlideCommitStarted = { viewModel.onSlideCommitStarted() },
+                            getMovableLines = { direction -> viewModel.getMovableLines(direction) },
+                            getMovableCells = { direction -> viewModel.getMovableCells(direction) },
+                            onDragThresholdReached = { viewModel.onDragThresholdReached() },
+                            onDragBlocked = { viewModel.onDragBlocked() },
+                            onSnapBack = { viewModel.onSnapBack() },
+                            isDarkTheme = isDarkTheme,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             } else {
-                NextTileBar(
-                    nextTile = uiState.nextTile,
-                    isDarkTheme = isDarkTheme
-                )
-            }
-
-            // Game Board Component
-            GameBoardView(
-                grid = uiState.grid,
-                nextTile = uiState.nextTile,
-                onMoveRequested = { direction -> viewModel.onMove(direction) },
-                onSlideCommitStarted = { viewModel.onSlideCommitStarted() },
-                getMovableLines = { direction -> viewModel.getMovableLines(direction) },
-                getMovableCells = { direction -> viewModel.getMovableCells(direction) },
-                onDragThresholdReached = { viewModel.onDragThresholdReached() },
-                onDragBlocked = { viewModel.onDragBlocked() },
-                onSnapBack = { viewModel.onSnapBack() },
-                isDarkTheme = isDarkTheme,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-
-            // Bottom Actions: Undo & New Game
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (uiState.isUndoEnabled) {
-                    OutlinedButton(
-                        onClick = { viewModel.onUndo() },
-                        enabled = uiState.canUndo,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
-                        ),
-                        modifier = Modifier.height(44.dp)
-                    ) {
-                        Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Undo", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
-                }
-
-                FilledTonalButton(
-                    onClick = {
-                        if (uiState.isGameOver) {
-                            viewModel.onStartNewGame()
-                        } else {
-                            showNewGameConfirm = true
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = if (isDarkTheme) BoardPlateDark else EmptyCellLight
-                    ),
-                    modifier = Modifier.height(44.dp)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = "New Game",
-                        modifier = Modifier.size(18.dp),
-                        tint = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+                    TopHeaderBar(
+                        isDarkTheme = isDarkTheme,
+                        onOpenSettings = { viewModel.openSettings() },
+                        onOpenCastBook = { viewModel.openCastBook() }
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        "New Game",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+
+                    ScoreDashboard(
+                        score = uiState.score,
+                        highScore = uiState.highScore,
+                        isDarkTheme = isDarkTheme
+                    )
+
+                    NextOrGameOverBanner(
+                        uiState = uiState,
+                        isDarkTheme = isDarkTheme,
+                        onShowGameOver = { viewModel.showGameOverDialog() }
+                    )
+
+                    GameBoardView(
+                        grid = uiState.grid,
+                        nextTile = uiState.nextTile,
+                        lastMoveDirection = uiState.lastMoveDirection,
+                        onMoveRequested = { direction -> viewModel.onMove(direction) },
+                        onSlideCommitStarted = { viewModel.onSlideCommitStarted() },
+                        getMovableLines = { direction -> viewModel.getMovableLines(direction) },
+                        getMovableCells = { direction -> viewModel.getMovableCells(direction) },
+                        onDragThresholdReached = { viewModel.onDragThresholdReached() },
+                        onDragBlocked = { viewModel.onDragBlocked() },
+                        onSnapBack = { viewModel.onSnapBack() },
+                        isDarkTheme = isDarkTheme,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    )
+
+                    BottomActionBar(
+                        uiState = uiState,
+                        isDarkTheme = isDarkTheme,
+                        onUndo = { viewModel.onUndo() },
+                        onNewGameClick = {
+                            if (uiState.isGameOver) {
+                                viewModel.onStartNewGame()
+                            } else {
+                                showNewGameConfirm = true
+                            }
+                        }
                     )
                 }
             }
@@ -280,7 +224,7 @@ fun GameScreen(
                 highScore = uiState.highScore,
                 isNewRecord = uiState.isNewRecord,
                 grid = uiState.grid,
-                canUndo = uiState.canUndo,
+                canUndo = uiState.isUndoEnabled && uiState.canUndo,
                 onUndoLastMove = { viewModel.onUndo() },
                 onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
                 onPlayAgain = { viewModel.onStartNewGame() },
@@ -318,8 +262,8 @@ fun GameScreen(
         if (showNewGameConfirm) {
             AlertDialog(
                 onDismissRequest = { showNewGameConfirm = false },
-                title = { Text("Restart Game?") },
-                text = { Text("Are you sure you want to abandon the current game and start a new one?") },
+                title = { Text(stringResource(R.string.restart_game_title)) },
+                text = { Text(stringResource(R.string.restart_game_message)) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -328,17 +272,215 @@ fun GameScreen(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Card2Bg)
                     ) {
-                        Text("Restart", color = Color.White)
+                        Text(stringResource(R.string.restart), color = Color.White)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showNewGameConfirm = false }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.cancel))
                     }
                 },
                 containerColor = if (isDarkTheme) BoardPlateDark else BoardBackgroundLight,
                 titleContentColor = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
                 textContentColor = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
+            )
+        }
+    }
+}
+
+@Composable
+private fun TopHeaderBar(
+    isDarkTheme: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenCastBook: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier.size(44.dp)
+        ) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = stringResource(R.string.settings),
+                tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(color = Card1Bg)) { append("T") }
+                withStyle(SpanStyle(color = Card2Bg)) { append("H") }
+                withStyle(SpanStyle(color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight)) {
+                    append("REES!")
+                }
+            },
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 1.sp
+        )
+
+        IconButton(
+            onClick = onOpenCastBook,
+            modifier = Modifier.size(44.dp)
+        ) {
+            Icon(
+                Icons.Default.AutoStories,
+                contentDescription = stringResource(R.string.cast_book),
+                tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScoreDashboard(
+    score: Int,
+    highScore: Int,
+    isDarkTheme: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        Column {
+            Text(
+                text = stringResource(R.string.score),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+                color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
+            )
+            Text(
+                text = score.toString(),
+                fontSize = 38.sp,
+                fontWeight = FontWeight.Black,
+                color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
+                letterSpacing = (-0.5).sp
+            )
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = stringResource(R.string.best),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+                color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
+            )
+            Text(
+                text = highScore.toString(),
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
+            )
+        }
+    }
+}
+
+@Composable
+private fun NextOrGameOverBanner(
+    uiState: GameUiState,
+    isDarkTheme: Boolean,
+    onShowGameOver: () -> Unit
+) {
+    if (uiState.isGameOver && uiState.isGameOverDialogDismissed) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(Card2Bg)
+                .clickable(onClick = onShowGameOver)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = stringResource(R.string.out_of_moves_banner),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 1.sp,
+                color = Color.White
+            )
+        }
+    } else {
+        NextTileBar(
+            nextTile = uiState.nextTile,
+            isDarkTheme = isDarkTheme
+        )
+    }
+}
+
+@Composable
+private fun BottomActionBar(
+    uiState: GameUiState,
+    isDarkTheme: Boolean,
+    onUndo: () -> Unit,
+    onNewGameClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (uiState.isUndoEnabled) {
+            OutlinedButton(
+                onClick = onUndo,
+                enabled = uiState.canUndo,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+                ),
+                modifier = Modifier.height(44.dp)
+            ) {
+                Icon(
+                    Icons.Default.Undo,
+                    contentDescription = stringResource(R.string.undo),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    stringResource(R.string.undo),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    maxLines = 1
+                )
+            }
+        } else {
+            Spacer(modifier = Modifier.width(1.dp))
+        }
+
+        FilledTonalButton(
+            onClick = onNewGameClick,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = if (isDarkTheme) BoardPlateDark else EmptyCellLight
+            ),
+            modifier = Modifier.height(44.dp)
+        ) {
+            Icon(
+                Icons.Default.Refresh,
+                contentDescription = stringResource(R.string.new_game),
+                modifier = Modifier.size(18.dp),
+                tint = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                stringResource(R.string.new_game),
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
             )
         }
     }
