@@ -2,8 +2,7 @@ package com.threes.game.audio
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
+import android.media.SoundPool
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -12,21 +11,42 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.exp
+import kotlin.math.min
 import kotlin.math.sin
 
-class SoundEngine(private val context: Context) {
+interface SoundController {
+    var soundEnabled: Boolean
+    var hapticsEnabled: Boolean
+    fun playMerge(tileValue: Int)
+    fun playSlide()
+    fun playSnap()
+    fun playGameOver()
+    fun playNewRecord()
+    fun playCharacterVoice(value: Int)
+    fun vibrateTick()
+    fun vibrateSlide()
+    fun vibrateDragThreshold()
+    fun vibrateBlocked()
+    fun vibrateMerge()
+    fun vibrateNewRecord()
+    fun vibrateGameOver()
+    fun release()
+}
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+class SoundEngine(private val context: Context) : SoundController {
 
-    var soundEnabled: Boolean = true
-    var hapticsEnabled: Boolean = true
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override var soundEnabled: Boolean = true
+    override var hapticsEnabled: Boolean = true
 
     private val vibrator: Vibrator? by lazy {
         try {
@@ -53,165 +73,217 @@ class SoundEngine(private val context: Context) {
 
     private val sampleRate = 44100
 
-    // Thread-safe audio caches for fast playback
-    private val chimeCache = ConcurrentHashMap<Int, ByteArray>()
-    @Volatile private var slideAudio: ByteArray? = null
-    @Volatile private var snapAudio: ByteArray? = null
-    @Volatile private var gameOverAudio: ByteArray? = null
-    @Volatile private var newRecordAudio: ByteArray? = null
+    private val loadedSoundIds = ConcurrentHashMap.newKeySet<Int>()
+    private val chimeSoundIds = ConcurrentHashMap<Int, Int>()
+    private val voiceSoundIds = ConcurrentHashMap<Int, Int>()
+    @Volatile private var slideSoundId: Int = 0
+    @Volatile private var snapSoundId: Int = 0
+    @Volatile private var gameOverSoundId: Int = 0
+    @Volatile private var newRecordSoundId: Int = 0
+    @Volatile private var isReleased = false
+
+    private val soundPool: SoundPool? = try {
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        SoundPool.Builder()
+            .setMaxStreams(8)
+            .setAudioAttributes(attrs)
+            .build()
+            .apply {
+                setOnLoadCompleteListener { _, sampleId, status ->
+                    if (status == 0) {
+                        loadedSoundIds.add(sampleId)
+                    }
+                }
+            }
+    } catch (_: Exception) {
+        null
+    }
 
     init {
         scope.launch {
-            precomputeAudio()
+            precomputeAndLoadSounds()
         }
     }
 
-    fun release() {
+    override fun release() {
+        isReleased = true
         scope.cancel()
+        try {
+            soundPool?.release()
+        } catch (_: Exception) {}
+        loadedSoundIds.clear()
+        chimeSoundIds.clear()
+        voiceSoundIds.clear()
     }
 
-    private fun precomputeAudio() {
-        val frequencies = mapOf(
-            3 to 523.25f,    // C5
-            6 to 587.33f,    // D5
-            12 to 659.25f,   // E5
-            24 to 783.99f,   // G5
-            48 to 880.00f,   // A5
-            96 to 1046.50f,  // C6
-            192 to 1174.66f, // D6
-            384 to 1318.51f, // E6
-            768 to 1567.98f, // G6
-            1536 to 1760.00f,// A6
-            3072 to 2093.00f,// C7
-            6144 to 2637.02f // E7
+    private fun precomputeAndLoadSounds() {
+        val pool = soundPool ?: return
+        val cacheDir = try {
+            File(context.cacheDir, "threes_sfx_v2").apply { mkdirs() }
+        } catch (_: Exception) {
+            return
+        }
+
+        val mergeFrequencies = mapOf(
+            3 to 523.25f,     // C5
+            6 to 587.33f,     // D5
+            12 to 659.25f,    // E5
+            24 to 783.99f,    // G5
+            48 to 880.00f,    // A5
+            96 to 1046.50f,   // C6
+            192 to 1174.66f,  // D6
+            384 to 1318.51f,  // E6
+            768 to 1567.98f,  // G6
+            1536 to 1760.00f, // A6
+            3072 to 2093.00f, // C7
+            6144 to 2637.02f  // E7
         )
 
-        for ((value, freq) in frequencies) {
-            chimeCache[value] = generateBellChime(freq, 0.35f)
+        for ((value, freq) in mergeFrequencies) {
+            if (isReleased) return
+            val id = loadPcmIntoPool(pool, cacheDir, "chime_$value.wav") {
+                generateBellChime(freq, 0.35f)
+            }
+            if (id > 0) chimeSoundIds[value] = id
         }
 
-        slideAudio = generateSlideSound(0.06f)
-        snapAudio = generateSnapSound(0.03f)
-        gameOverAudio = generateMelancholicJingle()
-        newRecordAudio = generateVictoryFanfare()
+        val voiceFrequencies = mapOf(
+            1 to 440.00f,     // Uno
+            2 to 554.37f,     // Dos
+            3 to 659.25f,     // Trey
+            6 to 587.33f,     // Todd
+            12 to 523.25f,    // Terry
+            24 to 698.46f,    // Torval
+            48 to 783.99f,    // Twee
+            96 to 880.00f,    // Thelma
+            192 to 392.00f,   // Thurston
+            384 to 329.63f,   // Torrance
+            768 to 987.77f,   // Tycho
+            1536 to 293.66f,  // Terrence
+            3072 to 739.99f,  // Theron
+            6144 to 1046.50f  // Trinity
+        )
+
+        for ((value, freq) in voiceFrequencies) {
+            if (isReleased) return
+            val id = loadPcmIntoPool(pool, cacheDir, "voice_$value.wav") {
+                generateCuteVoiceChirp(freq)
+            }
+            if (id > 0) voiceSoundIds[value] = id
+        }
+
+        if (isReleased) return
+        slideSoundId = loadPcmIntoPool(pool, cacheDir, "slide.wav") { generateSlideSound(0.06f) }
+        snapSoundId = loadPcmIntoPool(pool, cacheDir, "snap.wav") { generateSnapSound(0.03f) }
+        gameOverSoundId = loadPcmIntoPool(pool, cacheDir, "gameover.wav") { generateMelancholicJingle() }
+        newRecordSoundId = loadPcmIntoPool(pool, cacheDir, "newrecord.wav") { generateVictoryFanfare() }
     }
 
-    fun playMerge(tileValue: Int) {
-        if (soundEnabled) {
-            scope.launch {
-                val pcm = chimeCache[tileValue] ?: generateBellChime(523.25f, 0.3f)
-                playPcm(pcm)
+    private inline fun loadPcmIntoPool(
+        pool: SoundPool,
+        dir: File,
+        filename: String,
+        generator: () -> ByteArray
+    ): Int {
+        return try {
+            val file = File(dir, filename)
+            if (!file.exists() || file.length() <= 44L) {
+                val pcm = generator()
+                val tempFile = File(dir, "$filename.tmp")
+                writeWavFile(tempFile, pcm)
+                if (!tempFile.renameTo(file)) {
+                    writeWavFile(file, pcm)
+                    tempFile.delete()
+                }
             }
+            if (isReleased) 0 else pool.load(file.absolutePath, 1)
+        } catch (_: Exception) {
+            0
         }
+    }
+
+    private fun writeWavFile(file: File, pcmData: ByteArray) {
+        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray(Charsets.US_ASCII))
+            putInt(36 + pcmData.size)
+            put("WAVE".toByteArray(Charsets.US_ASCII))
+            put("fmt ".toByteArray(Charsets.US_ASCII))
+            putInt(16) // PCM chunk size
+            putShort(1) // PCM format
+            putShort(1) // Mono
+            putInt(sampleRate)
+            putInt(sampleRate * 2) // Byte rate
+            putShort(2) // Block align
+            putShort(16) // Bits per sample
+            put("data".toByteArray(Charsets.US_ASCII))
+            putInt(pcmData.size)
+        }.array()
+
+        FileOutputStream(file).use { out ->
+            out.write(header)
+            out.write(pcmData)
+        }
+    }
+
+    private fun playSoundId(soundId: Int, volume: Float = 1f) {
+        if (!soundEnabled || isReleased || soundId <= 0) return
+        if (!loadedSoundIds.contains(soundId)) return
+        try {
+            soundPool?.play(soundId, volume, volume, 1, 0, 1f)
+        } catch (_: Exception) {}
+    }
+
+    override fun playMerge(tileValue: Int) {
+        val id = chimeSoundIds[tileValue] ?: chimeSoundIds[3] ?: 0
+        playSoundId(id)
         vibrateMerge()
     }
 
-    fun playSlide() {
-        if (soundEnabled) {
-            scope.launch {
-                slideAudio?.let { playPcm(it) }
-            }
-        }
+    override fun playSlide() {
+        playSoundId(slideSoundId, volume = 0.85f)
         vibrateSlide()
     }
 
-    fun playSnap() {
-        if (soundEnabled) {
-            scope.launch {
-                snapAudio?.let { playPcm(it) }
-            }
-        }
+    override fun playSnap() {
+        playSoundId(snapSoundId, volume = 0.9f)
         vibrateTick()
     }
 
-    fun playGameOver() {
-        if (soundEnabled) {
-            scope.launch {
-                gameOverAudio?.let { playPcm(it) }
-            }
-        }
+    override fun playGameOver() {
+        playSoundId(gameOverSoundId)
         vibrateGameOver()
     }
 
-    fun playNewRecord() {
-        if (soundEnabled) {
-            scope.launch {
-                newRecordAudio?.let { playPcm(it) }
-            }
-        }
+    override fun playNewRecord() {
+        playSoundId(newRecordSoundId)
         vibrateNewRecord()
     }
 
-    fun playCharacterVoice(value: Int) {
-        if (!soundEnabled) return
-        scope.launch {
-            val freq = when (value) {
-                1 -> 440f
-                2 -> 554.37f
-                3 -> 659.25f
-                6 -> 587.33f
-                12 -> 523.25f
-                24 -> 698.46f
-                48 -> 783.99f
-                96 -> 880f
-                192 -> 392f
-                384 -> 330f
-                else -> 523.25f
-            }
-            val voicePcm = generateCuteVoiceChirp(freq)
-            playPcm(voicePcm)
-        }
-    }
-
-    private fun playPcm(pcmData: ByteArray) {
-        try {
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_GAME)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(pcmData.size)
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .build()
-
-            track.write(pcmData, 0, pcmData.size)
-            track.play()
-            // Release after playing
-            scope.launch {
-                val durationMs = (pcmData.size.toDouble() / (sampleRate * 2) * 1000).toLong() + 100
-                delay(durationMs)
-                try {
-                    track.stop()
-                    track.release()
-                } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
+    override fun playCharacterVoice(value: Int) {
+        val id = voiceSoundIds[value] ?: voiceSoundIds[3] ?: 0
+        playSoundId(id)
     }
 
     private fun generateBellChime(frequency: Float, durationSec: Float): ByteArray {
         val totalSamples = (sampleRate * durationSec).toInt()
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val fadeInSamples = (sampleRate * 0.003f).toInt().coerceAtLeast(1)
+        val fadeOutSamples = (sampleRate * 0.015f).toInt().coerceAtLeast(1)
 
         for (i in 0 until totalSamples) {
             val t = i.toDouble() / sampleRate
-            val decay = exp(-t * 9.0) // Warm exponential decay
+            val decay = exp(-t * 9.0)
             val decayHarmonic = exp(-t * 16.0)
+            val env = edgeEnvelope(i, totalSamples, fadeInSamples, fadeOutSamples)
 
-            // Fundamental + 2nd + 3rd harmonic
             val sample = (
                 0.7 * sin(2.0 * PI * frequency * t) * decay +
-                0.25 * sin(2.0 * PI * frequency * 2.0 * t) * decayHarmonic +
-                0.1 * sin(2.0 * PI * frequency * 3.0 * t) * exp(-t * 22.0)
-            ) * 0.9
+                    0.25 * sin(2.0 * PI * frequency * 2.0 * t) * decayHarmonic +
+                    0.1 * sin(2.0 * PI * frequency * 3.0 * t) * exp(-t * 22.0)
+                ) * 0.9 * env
 
             val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
             byteBuffer.putShort(shortSample)
@@ -227,7 +299,7 @@ class SoundEngine(private val context: Context) {
         for (i in 0 until totalSamples) {
             val t = i.toDouble() / sampleRate
             val progress = t / durationSec
-            val envelope = sin(progress * PI) // Hanning window
+            val envelope = sin(progress * PI)
             val instFreq = 300.0 + progress * 200.0
             phase += 2.0 * PI * instFreq / sampleRate
 
@@ -244,11 +316,14 @@ class SoundEngine(private val context: Context) {
     private fun generateSnapSound(durationSec: Float): ByteArray {
         val totalSamples = (sampleRate * durationSec).toInt()
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val fadeInSamples = (sampleRate * 0.002f).toInt().coerceAtLeast(1)
+        val fadeOutSamples = (sampleRate * 0.006f).toInt().coerceAtLeast(1)
 
         for (i in 0 until totalSamples) {
             val t = i.toDouble() / sampleRate
             val decay = exp(-t * 120.0)
-            val sample = sin(2.0 * PI * 800.0 * t) * decay * 0.6
+            val env = edgeEnvelope(i, totalSamples, fadeInSamples, fadeOutSamples)
+            val sample = sin(2.0 * PI * 800.0 * t) * decay * 0.6 * env
 
             val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
             byteBuffer.putShort(shortSample)
@@ -278,15 +353,18 @@ class SoundEngine(private val context: Context) {
     private fun generateMelancholicJingle(): ByteArray {
         val notes = listOf(783.99f, 659.25f, 523.25f, 440.00f) // G5, E5, C5, A4
         val noteDur = 0.18f
-        val totalSamples = (sampleRate * noteDur * notes.size).toInt()
+        val noteSamples = (sampleRate * noteDur).toInt()
+        val totalSamples = noteSamples * notes.size
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val fadeIn = (sampleRate * 0.005f).toInt().coerceAtLeast(1)
+        val fadeOut = (sampleRate * 0.020f).toInt().coerceAtLeast(1)
 
         for (freq in notes) {
-            val noteSamples = (sampleRate * noteDur).toInt()
             for (i in 0 until noteSamples) {
                 val t = i.toDouble() / sampleRate
                 val decay = exp(-t * 6.0)
-                val sample = sin(2.0 * PI * freq * t) * decay * 0.7
+                val env = edgeEnvelope(i, noteSamples, fadeIn, fadeOut)
+                val sample = sin(2.0 * PI * freq * t) * decay * 0.7 * env
                 val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
                 byteBuffer.putShort(shortSample)
             }
@@ -297,20 +375,36 @@ class SoundEngine(private val context: Context) {
     private fun generateVictoryFanfare(): ByteArray {
         val notes = listOf(523.25f, 659.25f, 783.99f, 1046.50f) // C5, E5, G5, C6
         val noteDur = 0.14f
-        val totalSamples = (sampleRate * noteDur * notes.size).toInt()
+        val noteSamples = (sampleRate * noteDur).toInt()
+        val totalSamples = noteSamples * notes.size
         val byteBuffer = ByteBuffer.allocate(totalSamples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val fadeIn = (sampleRate * 0.004f).toInt().coerceAtLeast(1)
+        val fadeOut = (sampleRate * 0.018f).toInt().coerceAtLeast(1)
 
         for (freq in notes) {
-            val noteSamples = (sampleRate * noteDur).toInt()
             for (i in 0 until noteSamples) {
                 val t = i.toDouble() / sampleRate
                 val decay = exp(-t * 5.0)
-                val sample = (0.7 * sin(2.0 * PI * freq * t) + 0.3 * sin(4.0 * PI * freq * t)) * decay * 0.8
+                val env = edgeEnvelope(i, noteSamples, fadeIn, fadeOut)
+                val sample = (0.7 * sin(2.0 * PI * freq * t) + 0.3 * sin(4.0 * PI * freq * t)) *
+                    decay * 0.8 * env
                 val shortSample = (sample * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
                 byteBuffer.putShort(shortSample)
             }
         }
         return byteBuffer.array()
+    }
+
+    private fun edgeEnvelope(
+        index: Int,
+        totalSamples: Int,
+        fadeInSamples: Int,
+        fadeOutSamples: Int
+    ): Double {
+        val inGain = if (index < fadeInSamples) index.toDouble() / fadeInSamples else 1.0
+        val remaining = totalSamples - 1 - index
+        val outGain = if (remaining < fadeOutSamples) remaining.toDouble() / fadeOutSamples else 1.0
+        return min(inGain, outGain).coerceIn(0.0, 1.0)
     }
 
     // Haptics
@@ -355,32 +449,32 @@ class SoundEngine(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun vibrateTick() {
+    override fun vibrateTick() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_CLICK else -1
         doVibrate(durationMs = 15, predefinedEffectId = effectId, amplitude = 100)
     }
 
-    fun vibrateSlide() {
+    override fun vibrateSlide() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_TICK else -1
         doVibrate(durationMs = 12, predefinedEffectId = effectId, amplitude = 70)
     }
 
-    fun vibrateDragThreshold() {
+    override fun vibrateDragThreshold() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_CLICK else -1
         doVibrate(durationMs = 15, predefinedEffectId = effectId, amplitude = 120)
     }
 
-    fun vibrateBlocked() {
+    override fun vibrateBlocked() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_HEAVY_CLICK else -1
         doVibrate(durationMs = 25, predefinedEffectId = effectId, amplitude = 160)
     }
 
-    fun vibrateMerge() {
+    override fun vibrateMerge() {
         val effectId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) VibrationEffect.EFFECT_HEAVY_CLICK else -1
         doVibrate(durationMs = 35, predefinedEffectId = effectId, amplitude = 180)
     }
 
-    fun vibrateNewRecord() {
+    override fun vibrateNewRecord() {
         if (!hapticsEnabled) return
         val v = vibrator ?: return
         try {
@@ -401,7 +495,7 @@ class SoundEngine(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun vibrateGameOver() {
+    override fun vibrateGameOver() {
         if (!hapticsEnabled) return
         val v = vibrator ?: return
         try {

@@ -18,13 +18,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.threes.game.R
 import com.threes.game.model.Tile
 import com.threes.game.ui.theme.NextHint1
 import com.threes.game.ui.theme.NextHint2
 import com.threes.game.ui.theme.NextHint3
+import com.threes.game.ui.theme.NextHint3Dark
 import com.threes.game.ui.theme.NextHintBonus
 import com.threes.game.ui.theme.TextPrimaryLight
 import com.threes.game.ui.theme.TextSecondaryDark
@@ -40,7 +43,7 @@ fun NextTileBar(
         nextTile.isBonus -> NextHintBonus
         nextTile.isOne -> NextHint1
         nextTile.isTwo -> NextHint2
-        else -> if (isDarkTheme) Color(0xFFFAF6EE) else NextHint3
+        else -> if (isDarkTheme) NextHint3Dark else NextHint3
     }
 
     val animatedColor by animateColorAsState(targetValue = barColor, label = "nextColor")
@@ -73,7 +76,7 @@ fun NextTileBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "NEXT",
+            text = stringResource(R.string.next),
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
             color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
@@ -95,7 +98,9 @@ fun NextTileBar(
                 text = labelText,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Black,
-                color = textColor
+                color = textColor,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

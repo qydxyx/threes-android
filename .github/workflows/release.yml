@@ -1,0 +1,148 @@
+name: Release Signed APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag override (defaults to v<versionName> from app/build.gradle.kts)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Test, Sign & Publish Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Determine release version and tag
+        id: version
+        shell: bash
+        run: |
+          APP_VERSION=$(grep -E '^\s*versionName\s*=' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION_CODE=$(grep -E '^\s*versionCode\s*=' app/build.gradle.kts | head -n1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.tag_name }}" ]]; then
+            TAG_NAME="${{ inputs.tag_name }}"
+          else
+            TAG_NAME="v${APP_VERSION}"
+          fi
+          echo "version_name=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Validate and decode release keystore
+        id: keystore
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [[ -z "${RELEASE_KEYSTORE_BASE64}" || -z "${RELEASE_STORE_PASSWORD}" || -z "${RELEASE_KEY_ALIAS}" || -z "${RELEASE_KEY_PASSWORD}" ]]; then
+            echo "::error::Missing required signing secrets (RELEASE_KEYSTORE_BASE64, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD)."
+            exit 1
+          fi
+          KEYSTORE_PATH="${RUNNER_TEMP}/release.keystore"
+          printf '%s' "${RELEASE_KEYSTORE_BASE64}" | tr -d '[:space:]' | base64 --decode > "${KEYSTORE_PATH}"
+          if [[ ! -s "${KEYSTORE_PATH}" ]]; then
+            echo "::error::Decoded release keystore file is empty."
+            exit 1
+          fi
+          echo "path=${KEYSTORE_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble signed Release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease -PrequireReleaseSigning=true --stacktrace
+
+      - name: Verify APK signature & prepare release assets
+        id: package
+        shell: bash
+        run: |
+          RAW_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)
+          if [[ -z "${RAW_APK}" || ! -f "${RAW_APK}" ]]; then
+            echo "::error::Signed release APK not found."
+            exit 1
+          fi
+          OUT_DIR="${RUNNER_TEMP}/release-assets"
+          mkdir -p "${OUT_DIR}"
+          OUT_APK="${OUT_DIR}/threes-android-v${{ steps.version.outputs.version_name }}-release.apk"
+          cp "${RAW_APK}" "${OUT_APK}"
+
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)
+          if [[ -z "${APKSIGNER}" ]]; then
+            echo "::error::apksigner not found in ${ANDROID_HOME}/build-tools."
+            exit 1
+          fi
+          "${APKSIGNER}" verify --print-certs --verbose "${OUT_APK}" | tee "${RUNNER_TEMP}/apk-verify.txt"
+
+          (cd "${OUT_DIR}" && sha256sum "$(basename "${OUT_APK}")" > "$(basename "${OUT_APK}").sha256")
+          echo "apk_path=${OUT_APK}" >> "$GITHUB_OUTPUT"
+          echo "sha_path=${OUT_APK}.sha256" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release Build Summary"
+            echo "- Version: \`v${{ steps.version.outputs.version_name }}\` (versionCode \`${{ steps.version.outputs.version_code }}\`)"
+            echo "- Tag: \`${{ steps.version.outputs.tag_name }}\`"
+            echo "- Output: \`$(basename "${OUT_APK}")\`"
+            echo ""
+            echo "\`\`\`"
+            grep -E "Signer #1 certificate|Verified using" "${RUNNER_TEMP}/apk-verify.txt" || true
+            cat "${OUT_APK}.sha256"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up decoded keystore
+        if: always()
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/release.keystore"
+
+      - name: Upload signed APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: threes-android-v${{ steps.version.outputs.version_name }}-release
+          path: |
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.sha_path }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Threes! for Android ${{ steps.version.outputs.tag_name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.apk_path }}
+            ${{ steps.package.outputs.sha_path }}

@@ -1,24 +1,33 @@
 package com.threes.game.ui.viewmodel
 
-import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.Immutable
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.threes.game.audio.SoundController
 import com.threes.game.audio.SoundEngine
+import com.threes.game.data.GameStorage
 import com.threes.game.data.PreferencesRepository
 import com.threes.game.data.SavedGame
 import com.threes.game.engine.GameEngine
 import com.threes.game.model.Direction
 import com.threes.game.model.Tile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 @Immutable
 data class GameUiState(
     val grid: List<List<Tile?>> = List(4) { List(4) { null } },
     val score: Int = 0,
     val highScore: Int = 0,
-    val nextTile: Tile = Tile.create(1),
+    val nextTile: Tile = Tile.preview(1),
+    val lastMoveDirection: Direction? = null,
     val isGameOver: Boolean = false,
     val isGameOverDialogDismissed: Boolean = false,
     val isNewRecord: Boolean = false,
@@ -32,14 +41,19 @@ data class GameUiState(
     val isSettingsOpen: Boolean = false
 )
 
-class ThreesViewModel(application: Application) : AndroidViewModel(application) {
+class ThreesViewModel internal constructor(
+    private val prefs: GameStorage,
+    private val sound: SoundController,
+    private val engine: GameEngine = GameEngine(),
+    private val injectedScope: CoroutineScope? = null
+) : ViewModel() {
 
-    private val prefs = PreferencesRepository(application)
-    private val sound = SoundEngine(application)
-    private val engine = GameEngine()
+    private val activeScope: CoroutineScope
+        get() = injectedScope ?: viewModelScope
 
     private var baselineHighScore: Int = 0
     private var hasBrokenRecordInSession: Boolean = false
+    private var gameOverAudioJob: Job? = null
 
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
@@ -62,7 +76,8 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
                 loadedDeck = saved.deck,
                 loadedScore = saved.score,
                 loadedMaxTile = saved.maxTile,
-                loadedMoveCount = saved.moveCount
+                loadedMoveCount = saved.moveCount,
+                loadedPreviousSnapshot = saved.previousSnapshot
             )
             if (engine.score > baselineHighScore) {
                 hasBrokenRecordInSession = true
@@ -92,8 +107,11 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
         val result = engine.move(direction)
         if (!result.moved) return
 
+        gameOverAudioJob?.cancel()
+
         // Handle merged tiles: play chimes and unlock characters
-        if (result.mergedTiles.isNotEmpty()) {
+        val hadMerge = result.mergedTiles.isNotEmpty()
+        if (hadMerge) {
             val maxMerged = result.mergedTiles.maxByOrNull { it.value }
             if (maxMerged != null) {
                 sound.playMerge(maxMerged.value)
@@ -121,21 +139,24 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         if (engine.isGameOver) {
-            if (hasBrokenRecordInSession) {
-                sound.playNewRecord()
+            val isNewRec = hasBrokenRecordInSession
+            if (hadMerge) {
+                gameOverAudioJob = activeScope.launch {
+                    delay(280L)
+                    if (isNewRec) sound.playNewRecord() else sound.playGameOver()
+                }
             } else {
-                sound.playGameOver()
+                if (isNewRec) sound.playNewRecord() else sound.playGameOver()
             }
-            prefs.clearSavedGame()
-        } else {
-            saveCurrentGame()
         }
 
+        saveCurrentGame()
         updateUiState(isGameOverDialogDismissed = false)
     }
 
     fun onUndo() {
         if (!prefs.isUndoEnabled || !engine.canUndo()) return
+        gameOverAudioJob?.cancel()
         if (engine.undo()) {
             sound.playSnap()
             if (hasBrokenRecordInSession) {
@@ -152,6 +173,7 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onStartNewGame() {
+        gameOverAudioJob?.cancel()
         baselineHighScore = prefs.highScore
         hasBrokenRecordInSession = false
         engine.startNewGame()
@@ -213,10 +235,7 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
     fun resetHighScore() {
         prefs.highScore = 0
         baselineHighScore = 0
-        hasBrokenRecordInSession = engine.score > 0
-        if (engine.score > 0) {
-            prefs.highScore = engine.score
-        }
+        hasBrokenRecordInSession = false
         saveCurrentGame()
         updateUiState()
     }
@@ -238,7 +257,6 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun saveCurrentGame() {
-        if (engine.isGameOver) return
         prefs.saveGame(
             SavedGame(
                 grid = engine.getGridSnapshot(),
@@ -248,7 +266,8 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
                 maxTile = engine.maxTileValue,
                 moveCount = engine.moveCount,
                 isNewRecord = hasBrokenRecordInSession,
-                baselineHighScore = baselineHighScore
+                baselineHighScore = baselineHighScore,
+                previousSnapshot = engine.getUndoSnapshot()
             )
         )
     }
@@ -261,6 +280,7 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
             score = engine.score,
             highScore = prefs.highScore,
             nextTile = engine.nextTile,
+            lastMoveDirection = engine.lastMoveDirection,
             isGameOver = engine.isGameOver,
             isGameOverDialogDismissed = if (engine.isGameOver) isGameOverDialogDismissed else false,
             isNewRecord = hasBrokenRecordInSession,
@@ -275,6 +295,22 @@ class ThreesViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        gameOverAudioJob?.cancel()
         sound.release()
+    }
+
+    companion object {
+        fun factory(context: Context): ViewModelProvider.Factory {
+            val appContext = context.applicationContext
+            return object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return ThreesViewModel(
+                        prefs = PreferencesRepository(appContext),
+                        sound = SoundEngine(appContext)
+                    ) as T
+                }
+            }
+        }
     }
 }

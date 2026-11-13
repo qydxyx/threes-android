@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
@@ -36,11 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.threes.game.R
 import com.threes.game.model.Tile
 import com.threes.game.ui.theme.AccentToddYellow
 import com.threes.game.ui.theme.BoardBackgroundLight
@@ -82,12 +86,13 @@ fun GameOverDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "GAME OVER",
+                        text = stringResource(R.string.game_over),
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Black,
                         color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight,
@@ -102,7 +107,7 @@ fun GameOverDialog(
                     ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "View Board",
+                            contentDescription = stringResource(R.string.view_board),
                             tint = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
                         )
                     }
@@ -117,7 +122,7 @@ fun GameOverDialog(
                             .padding(horizontal = 12.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "★ NEW BEST! ★",
+                            text = stringResource(R.string.new_best_badge),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF5A4400)
@@ -127,7 +132,6 @@ fun GameOverDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Score Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -142,7 +146,7 @@ fun GameOverDialog(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "FINAL SCORE",
+                            text = stringResource(R.string.final_score),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight,
@@ -162,7 +166,7 @@ fun GameOverDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "All-Time Best:",
+                                text = stringResource(R.string.all_time_best),
                                 fontSize = 13.sp,
                                 color = if (isDarkTheme) TextSecondaryDark else TextSecondaryLight
                             )
@@ -191,21 +195,21 @@ fun GameOverDialog(
                     ) {
                         Icon(
                             Icons.Default.Undo,
-                            contentDescription = "Undo Last Move",
+                            contentDescription = stringResource(R.string.undo_last_move),
                             modifier = Modifier.size(18.dp),
                             tint = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Undo Last Move",
+                            text = stringResource(R.string.undo_last_move),
                             fontWeight = FontWeight.Bold,
+                            maxLines = 1,
                             color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                 }
 
-                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -219,9 +223,17 @@ fun GameOverDialog(
                             .height(50.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = stringResource(R.string.share),
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Share", fontWeight = FontWeight.Bold)
+                        Text(
+                            text = stringResource(R.string.share),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
                     }
 
                     Button(
@@ -232,9 +244,18 @@ fun GameOverDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = Card1Bg),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Play Again", modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.play_again),
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Play Again", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(
+                            text = stringResource(R.string.play_again),
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -244,7 +265,8 @@ fun GameOverDialog(
 
 private fun shareGameResult(context: Context, score: Int, grid: List<List<Tile?>>) {
     val sb = StringBuilder()
-    sb.append("🎮 I scored $score in Threes! for Android!\n\n")
+    sb.append(context.getString(R.string.share_header, score))
+    sb.append("\n\n")
     for (r in 0 until 4) {
         for (c in 0 until 4) {
             val v = grid.getOrNull(r)?.getOrNull(c)?.value ?: 0
@@ -261,12 +283,15 @@ private fun shareGameResult(context: Context, score: Int, grid: List<List<Tile?>
         }
         sb.append("\n")
     }
-    sb.append("\nCan you beat my score?")
+    sb.append("\n")
+    sb.append(context.getString(R.string.share_footer))
 
     val sendIntent = Intent().apply {
         action = Intent.ACTION_SEND
         putExtra(Intent.EXTRA_TEXT, sb.toString())
         type = "text/plain"
     }
-    context.startActivity(Intent.createChooser(sendIntent, "Share Threes Score"))
+    context.startActivity(
+        Intent.createChooser(sendIntent, context.getString(R.string.share_chooser_title))
+    )
 }

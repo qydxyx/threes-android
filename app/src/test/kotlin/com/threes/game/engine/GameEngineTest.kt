@@ -176,37 +176,190 @@ class GameEngineTest {
     }
 
     @Test
-    fun testRestoreFromStateSyncsTileMaxId() {
+    fun testInitialBoardDealAndDeckBalance() {
+        val engine = GameEngine(Random(2026))
+        var tileCount = 0
+        for (r in 0 until 4) {
+            for (c in 0 until 4) {
+                val tile = engine.grid[r][c]
+                if (tile != null) {
+                    tileCount++
+                    assertTrue(tile.value in listOf(1, 2, 3))
+                    assertTrue(tile.isNew)
+                }
+            }
+        }
+        assertEquals(9, tileCount)
+        assertFalse(engine.isGameOver)
+        assertNull(engine.lastMoveDirection)
+        // 12-card deck: 9 on board + 1 nextTile => 2 left in deck
+        assertEquals(2, engine.deck.size)
+    }
+
+    @Test
+    fun testFourDirectionMovesAndSpawnEdge() {
+        // Test LEFT, RIGHT, UP, DOWN spawn edges deterministically
+        val directions = listOf(Direction.LEFT, Direction.RIGHT, Direction.UP, Direction.DOWN)
+        for (dir in directions) {
+            val engine = GameEngine(Random(11))
+            val customGrid = listOf(
+                listOf(null, null, null, null),
+                listOf(null, Tile.create(1), Tile.create(2), null),
+                listOf(null, null, null, null),
+                listOf(null, null, null, null)
+            )
+            engine.restoreFromState(
+                loadedGrid = customGrid,
+                loadedNextTile = Tile.create(3),
+                loadedDeck = listOf(1, 2, 3),
+                loadedScore = 0,
+                loadedMaxTile = 3,
+                loadedMoveCount = 0
+            )
+
+            val result = engine.move(dir)
+            assertTrue("Expected move $dir to succeed", result.moved)
+            assertEquals(dir, engine.lastMoveDirection)
+            assertEquals(1, engine.moveCount)
+            val spawnPos = result.spawnedPosition!!
+            when (dir) {
+                Direction.LEFT -> assertEquals(3, spawnPos.second)
+                Direction.RIGHT -> assertEquals(0, spawnPos.second)
+                Direction.UP -> assertEquals(3, spawnPos.first)
+                Direction.DOWN -> assertEquals(0, spawnPos.first)
+            }
+        }
+    }
+
+    @Test
+    fun testRestoreFromStateSyncsTileMaxIdAndUndoSnapshot() {
         val engine = GameEngine(Random(7))
         val highIdTile = Tile(id = 5000L, value = 3)
+        val snapTile = Tile(id = 6000L, value = 2)
         val grid = List(4) { r ->
             List(4) { c -> if (r == 0 && c == 0) highIdTile else null }
         }
+        val prevGrid = List(4) { r ->
+            List(4) { c -> if (r == 0 && c == 1) snapTile else null }
+        }
+        val snapshot = GameSnapshot(
+            grid = prevGrid,
+            score = 0,
+            nextTile = Tile(id = 6005L, value = 1),
+            deck = listOf(1, 2, 3),
+            maxTileValue = 2,
+            moveCount = 0
+        )
         engine.restoreFromState(
             loadedGrid = grid,
             loadedNextTile = Tile(id = 5005L, value = 1),
             loadedDeck = listOf(1, 2, 3),
             loadedScore = 3,
             loadedMaxTile = 3,
-            loadedMoveCount = 1
+            loadedMoveCount = 1,
+            loadedPreviousSnapshot = snapshot
         )
         val newlyCreated = Tile.create(2)
-        assertTrue(newlyCreated.id > 5005L)
+        assertTrue(newlyCreated.id > 6005L)
+        assertTrue(engine.canUndo())
+        assertTrue(engine.undo())
+        assertEquals(0, engine.score)
+        assertEquals(snapTile.id, engine.grid[0][1]?.id)
     }
 
     @Test
-    fun testUndoCapability() {
+    fun testUndoDeterministicAndClearsAnimationFlags() {
         val engine = GameEngine(Random(123))
-        val initialScore = engine.score
-        val canMoveLeft = engine.canMove(Direction.LEFT)
-        if (canMoveLeft) {
-            val moveRes = engine.move(Direction.LEFT)
-            assertTrue(moveRes.moved)
-            assertTrue(engine.canUndo())
-            val undoSuccess = engine.undo()
-            assertTrue(undoSuccess)
-            assertEquals(initialScore, engine.score)
-            assertFalse(engine.canUndo())
+        val customGrid = listOf(
+            listOf(Tile.create(1), Tile.create(2), null, null),
+            listOf(null, null, null, null),
+            listOf(null, null, null, null),
+            listOf(null, null, null, null)
+        )
+        engine.restoreFromState(
+            loadedGrid = customGrid,
+            loadedNextTile = Tile.create(3),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 0,
+            loadedMaxTile = 3,
+            loadedMoveCount = 0
+        )
+
+        val moveRes = engine.move(Direction.LEFT)
+        assertTrue(moveRes.moved)
+        assertEquals(1, moveRes.mergedTiles.size)
+        assertTrue(engine.grid[0][0]?.isMerged == true)
+        assertEquals(Direction.LEFT, engine.lastMoveDirection)
+        assertTrue(engine.canUndo())
+
+        assertTrue(engine.undo())
+        assertEquals(0, engine.score)
+        assertEquals(0, engine.moveCount)
+        assertNull(engine.lastMoveDirection)
+        assertFalse(engine.canUndo())
+        assertEquals(1, engine.grid[0][0]?.value)
+        assertEquals(2, engine.grid[0][1]?.value)
+        assertFalse(engine.grid[0][0]?.isMerged == true)
+        assertFalse(engine.grid[0][0]?.isNew == true)
+    }
+
+    @Test
+    fun testGameOverDetectionAndMoveRejection() {
+        val engine = GameEngine(Random(55))
+        // Checkerboard of 1s and 3/6/12 so no empty cells and no mergeable neighbors exist
+        val deadGrid = listOf(
+            listOf(Tile.create(1), Tile.create(3), Tile.create(6), Tile.create(12)),
+            listOf(Tile.create(3), Tile.create(6), Tile.create(12), Tile.create(24)),
+            listOf(Tile.create(6), Tile.create(12), Tile.create(24), Tile.create(48)),
+            listOf(Tile.create(12), Tile.create(24), Tile.create(48), Tile.create(96))
+        )
+        engine.restoreFromState(
+            loadedGrid = deadGrid,
+            loadedNextTile = Tile.create(1),
+            loadedDeck = listOf(2, 3),
+            loadedScore = 500,
+            loadedMaxTile = 96,
+            loadedMoveCount = 40
+        )
+
+        assertTrue(engine.isGameOver)
+        for (dir in Direction.values()) {
+            assertFalse(engine.canMove(dir))
+            assertFalse(engine.move(dir).moved)
         }
+    }
+
+    @Test
+    fun testBonusCardGenerationAndHintWindow() {
+        val engine = GameEngine(Random(777))
+        var observedBonus = false
+        for (trial in 0 until 300) {
+            val board = listOf(
+                listOf(Tile.create(384), null, null, null),
+                listOf(null, Tile.create(6), null, null),
+                listOf(null, null, null, null),
+                listOf(null, null, null, null)
+            )
+            engine.restoreFromState(
+                loadedGrid = board,
+                loadedNextTile = Tile.create(1),
+                loadedDeck = listOf(1, 2, 3),
+                loadedScore = 0,
+                loadedMaxTile = 384,
+                loadedMoveCount = 10
+            )
+            val res = engine.move(Direction.RIGHT)
+            assertTrue(res.moved)
+            val next = engine.nextTile
+            if (next.isBonus) {
+                observedBonus = true
+                // Max tile = 384 => limit = 384 / 8 = 48 => candidates: [6, 12, 24, 48]
+                assertTrue(next.value in listOf(6, 12, 24, 48))
+                assertTrue(next.bonusCandidates.size in 1..3)
+                assertTrue(next.bonusCandidates.contains(next.value))
+                assertTrue(next.bonusCandidates.all { it in listOf(6, 12, 24, 48) })
+            }
+        }
+        assertTrue("Expected at least one bonus card across 300 moves with maxTile=384", observedBonus)
     }
 }
