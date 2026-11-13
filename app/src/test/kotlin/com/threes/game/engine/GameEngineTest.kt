@@ -362,4 +362,47 @@ class GameEngineTest {
         }
         assertTrue("Expected at least one bonus card across 300 moves with maxTile=384", observedBonus)
     }
+
+    @Test
+    fun testGetMergingCellsReturnsBothTargetAndMoverAcrossDirections() {
+        val engine = GameEngine(Random(99))
+        val board = listOf(
+            listOf(Tile.create(1), Tile.create(2), Tile.create(6), Tile.create(6)),
+            listOf(Tile.create(3), Tile.create(6), Tile.create(3), Tile.create(3)),
+            listOf(null, Tile.create(3), null, null),
+            listOf(null, Tile.create(3), null, null)
+        )
+        engine.restoreFromState(
+            loadedGrid = board,
+            loadedNextTile = Tile.create(1),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 0,
+            loadedMaxTile = 6,
+            loadedMoveCount = 1
+        )
+
+        // LEFT: row 0 merges 1+2 at (0,0)-(0,1); row 1 has 3,6,3,3 -> slot2&3 merge at (1,2)-(1,3)
+        assertEquals(
+            setOf(0 to 0, 0 to 1, 1 to 2, 1 to 3),
+            engine.getMergingCells(Direction.LEFT)
+        )
+
+        // RIGHT: row 0 front pair 6+6 merges at (0,2)-(0,3); row 1 front pair 3+3 merges at (1,2)-(1,3)
+        assertEquals(
+            setOf(0 to 2, 0 to 3, 1 to 2, 1 to 3),
+            engine.getMergingCells(Direction.RIGHT)
+        )
+
+        // UP: col 0 has 1,3,null,null (no merge); col 1 has 2,6,3,3 -> 3+3 merges at (2,1)-(3,1)
+        assertEquals(
+            setOf(2 to 1, 3 to 1),
+            engine.getMergingCells(Direction.UP)
+        )
+
+        // DOWN: col 1 has from bottom 3,3,6,2 -> 3+3 merges at (2,1)-(3,1)
+        assertEquals(
+            setOf(2 to 1, 3 to 1),
+            engine.getMergingCells(Direction.DOWN)
+        )
+    }
 }

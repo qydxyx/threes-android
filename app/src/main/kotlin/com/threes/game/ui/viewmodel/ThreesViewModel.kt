@@ -99,6 +99,10 @@ class ThreesViewModel internal constructor(
         return engine.getMovableCells(direction)
     }
 
+    fun getMergingCells(direction: Direction): Set<Pair<Int, Int>> {
+        return engine.getMergingCells(direction)
+    }
+
     fun onSlideCommitStarted() {
         sound.playSlide()
     }

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.threes.game.model.Direction
 import com.threes.game.model.Tile
+import com.threes.game.ui.characters.DragExpressionMood
 import com.threes.game.ui.theme.BoardPlateDark
 import com.threes.game.ui.theme.BoardPlateLight
 import com.threes.game.ui.theme.NextHint1
@@ -63,6 +64,7 @@ fun GameBoardView(
     onSlideCommitStarted: () -> Unit = {},
     getMovableLines: (Direction) -> List<Int>,
     getMovableCells: (Direction) -> Set<Pair<Int, Int>>,
+    getMergingCells: (Direction) -> Set<Pair<Int, Int>> = { emptySet() },
     onDragThresholdReached: () -> Unit = {},
     onDragBlocked: () -> Unit = {},
     onSnapBack: () -> Unit = {},
@@ -84,25 +86,27 @@ fun GameBoardView(
     var activeDirection by remember { mutableStateOf<Direction?>(null) }
     var movableLineIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var movableCells by remember { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
+    var mergingCells by remember { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
     var hasReachedThreshold by remember { mutableStateOf(false) }
 
     val currentOnMoveRequested by rememberUpdatedState(onMoveRequested)
     val currentOnSlideCommitStarted by rememberUpdatedState(onSlideCommitStarted)
     val currentGetMovableLines by rememberUpdatedState(getMovableLines)
     val currentGetMovableCells by rememberUpdatedState(getMovableCells)
+    val currentGetMergingCells by rememberUpdatedState(getMergingCells)
     val currentOnDragThresholdReached by rememberUpdatedState(onDragThresholdReached)
     val currentOnDragBlocked by rememberUpdatedState(onDragBlocked)
     val currentOnSnapBack by rememberUpdatedState(onSnapBack)
 
-    // Gaze offset only depends on activeDirection (changes once per swipe, not per pixel)
+    // Gaze direction unit vector (smoothly scaled by drag progress inside Canvas draw phase)
     val lookOffsetX = when (activeDirection) {
-        Direction.LEFT -> -0.85f
-        Direction.RIGHT -> 0.85f
+        Direction.LEFT -> -1f
+        Direction.RIGHT -> 1f
         else -> 0f
     }
     val lookOffsetY = when (activeDirection) {
-        Direction.UP -> -0.85f
-        Direction.DOWN -> 0.85f
+        Direction.UP -> -1f
+        Direction.DOWN -> 1f
         else -> 0f
     }
 
@@ -156,6 +160,7 @@ fun GameBoardView(
                         activeDirection = null
                         movableLineIndices = emptyList()
                         movableCells = emptySet()
+                        mergingCells = emptySet()
                         hasReachedThreshold = false
 
                         velocityTracker.resetTracking()
@@ -184,6 +189,7 @@ fun GameBoardView(
                                 lockedCells = cells
                                 movableLineIndices = lines
                                 movableCells = cells
+                                mergingCells = currentGetMergingCells(dir)
                             }
 
                             val currentLocked = lockedDir
@@ -217,6 +223,7 @@ fun GameBoardView(
                                         activeDirection = recheckDir
                                         movableLineIndices = currentGetMovableLines(recheckDir)
                                         movableCells = candidateCells
+                                        mergingCells = currentGetMergingCells(recheckDir)
                                         lockedCells = candidateCells
                                     }
                                 }
@@ -373,6 +380,7 @@ fun GameBoardView(
                                     activeDirection = null
                                     movableLineIndices = emptyList()
                                     movableCells = emptySet()
+                                    mergingCells = emptySet()
                                     hasReachedThreshold = false
                                 }
                             }
@@ -417,6 +425,17 @@ fun GameBoardView(
                 }
 
                 val dir = activeDirection
+                val dragProgressProvider = remember {
+                    {
+                        val cell = cellSizePxState.floatValue.coerceAtLeast(1f)
+                        val denom = if (activeDirection != null && movableCells.isEmpty()) {
+                            cell * 0.12f
+                        } else {
+                            cell
+                        }
+                        (abs(dragOffsetPx.floatValue) / denom).coerceIn(0f, 1f)
+                    }
+                }
 
                 // Incoming card edge peek previews
                 if (dir != null && movableCells.isNotEmpty()) {
@@ -471,6 +490,16 @@ fun GameBoardView(
                         val tile = grid.getOrNull(r)?.getOrNull(c) ?: continue
                         key(tile.id) {
                             val isCellMovable = dir != null && movableCells.contains(r to c)
+                            val isCellMerging = dir != null && mergingCells.contains(r to c)
+                            val isStationaryMergeReceiver = isCellMerging && !isCellMovable
+                            val tileMood = when {
+                                dir == null -> DragExpressionMood.NEUTRAL
+                                isCellMerging -> DragExpressionMood.WILL_MERGE
+                                isCellMovable -> DragExpressionMood.MOVING
+                                else -> DragExpressionMood.BLOCKED
+                            }
+                            val tileLookX = if (isStationaryMergeReceiver) -lookOffsetX else lookOffsetX
+                            val tileLookY = if (isStationaryMergeReceiver) -lookOffsetY else lookOffsetY
                             val translateHoriz = dir?.isHorizontal == true && (isCellMovable || isAllBlocked)
                             val translateVert = dir?.isVertical == true && (isCellMovable || isAllBlocked)
                             val tileZIndex = if (isCellMovable || isAllBlocked) 1f else 0f
@@ -489,8 +518,10 @@ fun GameBoardView(
                                 TileView(
                                     tile = tile,
                                     isDarkTheme = isDarkTheme,
-                                    lookOffsetX = lookOffsetX,
-                                    lookOffsetY = lookOffsetY,
+                                    lookOffsetX = tileLookX,
+                                    lookOffsetY = tileLookY,
+                                    dragProgressProvider = dragProgressProvider,
+                                    expressionMood = tileMood,
                                     spawnFromDirection = lastMoveDirection,
                                     cellSizePx = cellPx
                                 )

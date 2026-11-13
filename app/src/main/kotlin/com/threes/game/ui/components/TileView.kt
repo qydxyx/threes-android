@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import com.threes.game.model.Direction
 import com.threes.game.model.Tile
 import com.threes.game.ui.characters.CharacterFace
+import com.threes.game.ui.characters.DragExpressionMood
 import com.threes.game.ui.theme.Card1Bg
 import com.threes.game.ui.theme.Card1Edge
 import com.threes.game.ui.theme.Card1Text
@@ -69,6 +70,8 @@ fun TileView(
     isDarkTheme: Boolean = false,
     lookOffsetX: Float = 0f,
     lookOffsetY: Float = 0f,
+    dragProgressProvider: () -> Float = { 0f },
+    expressionMood: DragExpressionMood = DragExpressionMood.NEUTRAL,
     isCompact: Boolean = false,
     spawnFromDirection: Direction? = null,
     cellSizePx: Float = 0f
@@ -87,9 +90,11 @@ fun TileView(
     val slideInAnim = remember(tile.id) {
         Animatable(initialSlideFraction)
     }
+    var isCelebratingMerge by remember(tile.id) { mutableStateOf(tile.isMerged) }
 
     LaunchedEffect(tile.id, tile.isMerged, tile.isNew) {
         if (tile.isMerged) {
+            isCelebratingMerge = true
             slideInAnim.snapTo(0f)
             scaleAnim.snapTo(1f)
             scaleAnim.animateTo(
@@ -104,7 +109,10 @@ fun TileView(
                 targetValue = 1f,
                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
             )
+            delay(260L)
+            isCelebratingMerge = false
         } else if (tile.isNew) {
+            isCelebratingMerge = false
             if (shouldSlideIn) {
                 scaleAnim.snapTo(1f)
                 slideInAnim.snapTo(0.62f)
@@ -126,6 +134,7 @@ fun TileView(
                 )
             }
         } else {
+            isCelebratingMerge = false
             if (scaleAnim.value != 1f) scaleAnim.snapTo(1f)
             if (slideInAnim.value != 0f) slideInAnim.snapTo(0f)
         }
@@ -234,6 +243,9 @@ fun TileView(
                 isBlinking = isBlinking,
                 lookOffsetX = lookOffsetX,
                 lookOffsetY = lookOffsetY,
+                dragProgressProvider = dragProgressProvider,
+                expressionMood = expressionMood,
+                isCelebrating = isCelebratingMerge,
                 modifier = Modifier.fillMaxSize()
             )
         }

@@ -182,6 +182,33 @@ class GameEngine(
         return cells
     }
 
+    /**
+     * Returns the coordinates (row, col) of both tiles (the stationary target and the incoming
+     * mover) that will merge when swiping in [direction].
+     */
+    fun getMergingCells(direction: Direction): Set<Pair<Int, Int>> {
+        val cells = mutableSetOf<Pair<Int, Int>>()
+        for (lineIdx in 0 until size) {
+            val line = getLine(direction, lineIdx)
+            val shiftResult = shiftLine(line)
+            val mergedIdx = shiftResult.mergedIndex
+            if (shiftResult.moved && mergedIdx != null) {
+                for (posInLine in mergedIdx..(mergedIdx + 1)) {
+                    if (line[posInLine] != null) {
+                        val coord = when (direction) {
+                            Direction.LEFT -> lineIdx to posInLine
+                            Direction.RIGHT -> lineIdx to (size - 1 - posInLine)
+                            Direction.UP -> posInLine to lineIdx
+                            Direction.DOWN -> (size - 1 - posInLine) to lineIdx
+                        }
+                        cells.add(coord)
+                    }
+                }
+            }
+        }
+        return cells
+    }
+
     fun move(direction: Direction): MoveResult {
         if (isGameOver) {
             return MoveResult(false, emptyList(), emptyList(), null, null)

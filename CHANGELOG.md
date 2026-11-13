@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.4 (versionCode 11)
+
+### Improvements
+- Upgraded character facial expressions in `CharacterFaces`, `TileView`, and `GameBoardView`:
+  - Smooth drag-progress gaze interpolation inside `Canvas` draw phase (zero recomposition overhead during 120Hz+ swipes) across all 14 characters, including `1` (Uno), `2` (Dos), and dynamic sunglasses/visor lens glints (`12`, `96`, `768`).
+  - Added three-state swipe expressions powered by `GameEngine.getMergingCells()`:
+    - **Merge anticipation**: merging tile pairs look toward each other with wide sparkling eyes and an excited `"O"` mouth as you drag past the threshold.
+    - **Blocked squint**: tiles blocked by walls or unmovable neighbors squeeze into `> <` effort expressions.
+    - **Merge celebration**: newly merged tiles display happy `^ ^` smiling eyes and open grins during their merge bounce.
+
 ## v1.2.3 (versionCode 10)
 
 ### Improvements
