@@ -105,24 +105,27 @@ class ThreesViewModelTest {
 
     @Test
     fun testResetHighScoreReallyClearsBestScore() {
-        val engine = GameEngine(Random(10))
-        engine.restoreFromState(
-            loadedGrid = listOf(
+        storage.highScore = 9
+        storage.savedGame = SavedGame(
+            grid = listOf(
                 listOf(Tile.create(1), Tile.create(2), null, null),
                 listOf(Tile.create(6), null, null, null),
                 listOf(null, null, null, null),
                 listOf(null, null, null, null)
             ),
-            loadedNextTile = Tile.create(3),
-            loadedDeck = listOf(1, 2, 3),
-            loadedScore = 9,
-            loadedMaxTile = 6,
-            loadedMoveCount = 4
+            nextTile = Tile.create(3),
+            deck = listOf(1, 2, 3),
+            score = 9,
+            maxTile = 6,
+            moveCount = 4,
+            isNewRecord = true,
+            baselineHighScore = 5
         )
-        storage.highScore = 9
+        val engine = GameEngine(Random(10))
         val viewModel = ThreesViewModel(storage, sound, engine, testScope)
 
         assertEquals(9, viewModel.uiState.value.highScore)
+        assertTrue(viewModel.uiState.value.isNewRecord)
         viewModel.resetHighScore()
 
         assertEquals(0, storage.highScore)
@@ -132,21 +135,23 @@ class ThreesViewModelTest {
 
     @Test
     fun testMoveUnlocksCharacterUpdatesHighScoreAndPersistsUndoSnapshot() {
-        val engine = GameEngine(Random(20))
-        engine.restoreFromState(
-            loadedGrid = listOf(
+        storage.highScore = 6
+        storage.savedGame = SavedGame(
+            grid = listOf(
                 listOf(Tile.create(3), Tile.create(3), null, null),
                 listOf(null, null, null, null),
                 listOf(null, null, null, null),
                 listOf(null, null, null, null)
             ),
-            loadedNextTile = Tile.create(1),
-            loadedDeck = listOf(1, 2, 3),
-            loadedScore = 6,
-            loadedMaxTile = 3,
-            loadedMoveCount = 1
+            nextTile = Tile.create(1),
+            deck = listOf(1, 2, 3),
+            score = 6,
+            maxTile = 3,
+            moveCount = 1,
+            isNewRecord = false,
+            baselineHighScore = 6
         )
-        storage.highScore = 6
+        val engine = GameEngine(Random(20))
         val viewModel = ThreesViewModel(storage, sound, engine, testScope)
 
         viewModel.onMove(Direction.LEFT)
@@ -172,22 +177,24 @@ class ThreesViewModelTest {
 
     @Test
     fun testGameOverPersistsBoardAndTriggersNonMergeGameOverAudio() {
-        val engine = GameEngine(Random(30))
+        storage.highScore = 5000
         // Move LEFT slides (0,3)=24 into (0,2)=null, and spawns nextTile=1 at (0,3) -> deadlocked!
-        engine.restoreFromState(
-            loadedGrid = listOf(
+        storage.savedGame = SavedGame(
+            grid = listOf(
                 listOf(Tile.create(1), Tile.create(3), null, Tile.create(24)),
                 listOf(Tile.create(3), Tile.create(6), Tile.create(12), Tile.create(24)),
                 listOf(Tile.create(6), Tile.create(12), Tile.create(24), Tile.create(48)),
                 listOf(Tile.create(12), Tile.create(24), Tile.create(48), Tile.create(96))
             ),
-            loadedNextTile = Tile.create(1),
-            loadedDeck = listOf(2, 3),
-            loadedScore = 500,
-            loadedMaxTile = 96,
-            loadedMoveCount = 30
+            nextTile = Tile.create(1),
+            deck = listOf(2, 3),
+            score = 1644,
+            maxTile = 96,
+            moveCount = 30,
+            isNewRecord = false,
+            baselineHighScore = 5000
         )
-        storage.highScore = 5000
+        val engine = GameEngine(Random(30))
         val viewModel = ThreesViewModel(storage, sound, engine, testScope)
 
         viewModel.onMove(Direction.LEFT)
