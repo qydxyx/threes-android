@@ -1,7 +1,6 @@
 package com.threes.game.ui.components
 
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -129,9 +128,14 @@ fun GameBoardView(
                 .background(if (isDarkTheme) BoardPlateDark else BoardPlateLight)
                 .pointerInput(Unit) {
                     val velocityTracker = VelocityTracker()
-                    val lockThresholdPx = 5.dp.toPx()
-                    val flickUpThresholdPx = 8.dp.toPx()
-                    val commitFraction = 0.34f
+                    val lockThresholdPx = SwipePhysics.LOCK_THRESHOLD_DP.dp.toPx()
+                    val flickUpThresholdPx = SwipePhysics.FLICK_UP_THRESHOLD_DP.dp.toPx()
+                    val blockedRecheckMaxPx = SwipePhysics.BLOCKED_RECHECK_MAX_DP.dp.toPx()
+                    val blockedHapticMinPx = SwipePhysics.BLOCKED_HAPTIC_MIN_DP.dp.toPx()
+                    val blockedRecheckMinPerpPx = 4.dp.toPx()
+                    val snapHapticMinPx = SwipePhysics.SNAP_HAPTIC_MIN_DP.dp.toPx()
+                    val flickVelocityThresholdPxPerSec =
+                        SwipePhysics.FLICK_VELOCITY_DP_PER_SEC.dp.toPx()
 
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -158,43 +162,98 @@ fun GameBoardView(
                         velocityTracker.addPosition(down.uptimeMillis, down.position)
 
                         var lockedDir: Direction? = null
+                        var lockOriginPx = 0f
                         var lockedCells: Set<Pair<Int, Int>> = emptySet()
+                        var hasNotifiedBlocked = false
                         var finishedNormally = false
 
-                        fun tryLockAndUpdate(delta: Offset, minLockPx: Float) {
+                        fun tryLockAndUpdate(delta: Offset, minLockPx: Float, isUp: Boolean) {
                             val liveCellSize = cellSizePxState.floatValue.coerceAtLeast(1f)
                             if (lockedDir == null && delta.getDistance() >= minLockPx) {
-                                val dir = if (abs(delta.x) > abs(delta.y)) {
-                                    if (delta.x > 0) Direction.RIGHT else Direction.LEFT
-                                } else {
-                                    if (delta.y > 0) Direction.DOWN else Direction.UP
-                                }
+                                val dir = SwipePhysics.detectDirection(delta.x, delta.y)
                                 lockedDir = dir
+                                lockOriginPx = SwipePhysics.computeLockOrigin(
+                                    dx = delta.x,
+                                    dy = delta.y,
+                                    dir = dir,
+                                    maxOriginPx = lockThresholdPx
+                                )
                                 activeDirection = dir
                                 val lines = currentGetMovableLines(dir)
                                 val cells = currentGetMovableCells(dir)
                                 lockedCells = cells
                                 movableLineIndices = lines
                                 movableCells = cells
-                                if (cells.isEmpty()) {
-                                    currentOnDragBlocked()
+                            }
+
+                            val currentLocked = lockedDir
+                            if (currentLocked != null && lockedCells.isEmpty() && !hasNotifiedBlocked) {
+                                val currentForward = (
+                                    SwipePhysics.signedAxisDelta(
+                                        delta.x,
+                                        delta.y,
+                                        currentLocked
+                                    ) - lockOriginPx
+                                    ).coerceAtLeast(0f)
+                                val recheckDir = SwipePhysics.shouldRecheckBlockedDirection(
+                                    dx = delta.x,
+                                    dy = delta.y,
+                                    currentDir = currentLocked,
+                                    forwardPx = currentForward,
+                                    recheckMaxDistPx = blockedRecheckMaxPx,
+                                    blockedHapticMinPx = blockedHapticMinPx,
+                                    minPerpPx = blockedRecheckMinPerpPx
+                                )
+                                if (recheckDir != null) {
+                                    val candidateCells = currentGetMovableCells(recheckDir)
+                                    if (candidateCells.isNotEmpty()) {
+                                        lockedDir = recheckDir
+                                        lockOriginPx = SwipePhysics.computeLockOrigin(
+                                            dx = delta.x,
+                                            dy = delta.y,
+                                            dir = recheckDir,
+                                            maxOriginPx = lockThresholdPx
+                                        )
+                                        activeDirection = recheckDir
+                                        movableLineIndices = currentGetMovableLines(recheckDir)
+                                        movableCells = candidateCells
+                                        lockedCells = candidateCells
+                                    }
                                 }
                             }
 
                             val dir = lockedDir
                             if (dir != null) {
                                 val hasMovable = lockedCells.isNotEmpty()
-                                val rawDelta = when (dir) {
-                                    Direction.LEFT -> delta.x.coerceIn(-liveCellSize, 0f)
-                                    Direction.RIGHT -> delta.x.coerceIn(0f, liveCellSize)
-                                    Direction.UP -> delta.y.coerceIn(-liveCellSize, 0f)
-                                    Direction.DOWN -> delta.y.coerceIn(0f, liveCellSize)
+                                val forwardPx = (
+                                    SwipePhysics.signedAxisDelta(delta.x, delta.y, dir) -
+                                        lockOriginPx
+                                    ).coerceAtLeast(0f)
+
+                                if (!hasMovable &&
+                                    !hasNotifiedBlocked &&
+                                    (isUp || forwardPx >= blockedHapticMinPx)
+                                ) {
+                                    hasNotifiedBlocked = true
+                                    currentOnDragBlocked()
                                 }
-                                val targetOffset = if (hasMovable) rawDelta else rawDelta * 0.18f
+
+                                val targetOffset = SwipePhysics.computeVisualDragOffset(
+                                    forwardPx = forwardPx,
+                                    cellSizePx = liveCellSize,
+                                    hasMovable = hasMovable,
+                                    dir = dir
+                                )
+
                                 if (hasMovable) {
-                                    val isPastThreshold = abs(targetOffset) >= liveCellSize * commitFraction
-                                    if (isPastThreshold != hasReachedThreshold) {
-                                        hasReachedThreshold = isPastThreshold
+                                    val progress = abs(targetOffset) / liveCellSize
+                                    val nextThresholdState = if (hasReachedThreshold) {
+                                        progress >= SwipePhysics.UNLATCH_FRACTION
+                                    } else {
+                                        progress >= SwipePhysics.COMMIT_FRACTION
+                                    }
+                                    if (nextThresholdState != hasReachedThreshold) {
+                                        hasReachedThreshold = nextThresholdState
                                         currentOnDragThresholdReached()
                                     }
                                 }
@@ -211,7 +270,7 @@ fun GameBoardView(
 
                             if (change.changedToUpIgnoreConsumed()) {
                                 change.consume()
-                                tryLockAndUpdate(delta, flickUpThresholdPx)
+                                tryLockAndUpdate(delta, flickUpThresholdPx, isUp = true)
                                 finishedNormally = true
                                 break
                             }
@@ -220,7 +279,7 @@ fun GameBoardView(
                                 break
                             }
 
-                            tryLockAndUpdate(delta, lockThresholdPx)
+                            tryLockAndUpdate(delta, lockThresholdPx, isUp = false)
                             if (lockedDir != null) {
                                 change.consume()
                             }
@@ -239,12 +298,17 @@ fun GameBoardView(
                             null -> 0f
                         }
 
-                        val shouldCommit = finishedNormally &&
-                            currentDir != null &&
-                            hasMovable &&
-                            (abs(currentOffset) >= liveCellSize * commitFraction ||
-                                (axisVelocity >= 550f &&
-                                    abs(currentOffset) >= maxOf(flickUpThresholdPx, liveCellSize * 0.08f)))
+                        val flickMinDistancePx =
+                            maxOf(flickUpThresholdPx, liveCellSize * SwipePhysics.FLICK_MIN_FRACTION)
+                        val shouldCommit = currentDir != null && SwipePhysics.shouldCommitMove(
+                            finishedNormally = finishedNormally,
+                            hasMovable = hasMovable,
+                            offsetPx = currentOffset,
+                            cellSizePx = liveCellSize,
+                            axisVelocityPxPerSec = axisVelocity,
+                            flickVelocityThresholdPxPerSec = flickVelocityThresholdPxPerSec,
+                            flickMinDistancePx = flickMinDistancePx
+                        )
 
                         val myToken = ++settleToken
                         settleJob = coroutineScope.launch {
@@ -256,16 +320,18 @@ fun GameBoardView(
                                         Direction.LEFT, Direction.UP -> -liveCellSize
                                         Direction.RIGHT, Direction.DOWN -> liveCellSize
                                     }
-                                    val remainingFraction =
-                                        (1f - (abs(currentOffset) / liveCellSize)).coerceIn(0f, 1f)
-                                    val animDurationMs =
-                                        (55f * remainingFraction).toInt().coerceIn(16, 60)
+                                    val distancePx = abs(targetFullSlide - currentOffset)
+                                    val animDurationMs = SwipePhysics.computeCommitAnimDurationMs(
+                                        distancePx = distancePx,
+                                        cellSizePx = liveCellSize,
+                                        axisVelocityPxPerSec = axisVelocity
+                                    )
                                     animate(
                                         initialValue = currentOffset,
                                         targetValue = targetFullSlide,
                                         animationSpec = tween(
                                             durationMillis = animDurationMs,
-                                            easing = FastOutLinearInEasing
+                                            easing = LinearOutSlowInEasing
                                         )
                                     ) { value, _ ->
                                         if (myToken == settleToken) {
@@ -278,15 +344,22 @@ fun GameBoardView(
                                         dragOffsetPx.floatValue = 0f
                                     }
                                 } else {
-                                    if (hasMovable && abs(currentOffset) > 10f) {
+                                    if (hasMovable && abs(currentOffset) > snapHapticMinPx) {
                                         currentOnSnapBack()
                                     }
+                                    val releaseVelocity = when {
+                                        currentDir == null -> 0f
+                                        currentDir.isHorizontal -> velocity.x
+                                        else -> velocity.y
+                                    }.coerceIn(-6000f, 6000f)
                                     animate(
                                         initialValue = currentOffset,
                                         targetValue = 0f,
+                                        initialVelocity = releaseVelocity,
                                         animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMedium
+                                            dampingRatio = 0.90f,
+                                            stiffness = 3800f,
+                                            visibilityThreshold = 0.75f
                                         )
                                     ) { value, _ ->
                                         if (myToken == settleToken) {
@@ -363,8 +436,8 @@ fun GameBoardView(
                                         (abs(dragOffsetPx.floatValue) / cellPx).coerceIn(0f, 1f)
                                     val baseX = spawnC * cellPx
                                     val baseY = spawnR * cellPx
-                                    if (progress > 0.2f) {
-                                        val peekFraction = ((progress - 0.2f) / 0.8f).coerceIn(0f, 1f)
+                                    if (progress > 0.15f) {
+                                        val peekFraction = ((progress - 0.15f) / 0.85f).coerceIn(0f, 1f)
                                         val peekShift = (1f - peekFraction * 0.38f) * cellPx
                                         translationX = baseX + when (dir) {
                                             Direction.LEFT -> peekShift

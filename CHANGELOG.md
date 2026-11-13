@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.3 (versionCode 10)
+
+### Improvements
+- Tuned swipe physics in `GameBoardView` / `SwipePhysics` for classic *Threes!* tactile weight and precision:
+  - Reduced axis lock threshold to `3.dp` with `lockOriginPx` compensation to eliminate the startup jump while preserving fast-flick travel.
+  - Added early blocked-direction recheck (within `14.dp`) so slightly diagonal swipes can seamlessly re-lock onto an adjacent movable axis.
+  - Replaced `550 px/s` + `8%` flick with density-independent `520.dp/s` + `14%` minimum travel and raised drag commit threshold to `45%` (with `41%` haptic unlatch hysteresis) for reliable slow peek-and-test gestures.
+  - Added smooth `0.14x` rubber-band over-drag beyond 100% cell travel, velocity-adaptive `LinearOutSlowInEasing` commit settling, and stiffer `3800f` spring snap-back preserving release velocity.
+- Added `SwipePhysicsTest` covering lock origin math, blocked-direction recheck, rubber-band clamping, commit thresholds, and adaptive commit timing.
+
 ## v1.2.2 (versionCode 9)
 
 ### Fixes

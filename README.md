@@ -11,7 +11,7 @@ A high-fidelity native Android recreation of the iconic indie puzzle masterpiece
   - Per-row/per-column obstacle blocking (blocked lines stay still while movable lines slide).
   - Dynamic gaze tracking (character eyes turn and watch in the direction of your swipe).
   - Incoming card edge peeking preview and smooth slide-in entrance.
-  - 38% threshold + velocity flick detection with smooth spring snap-back physics.
+  - 45% threshold + density-independent flick detection with rubber-band over-drag and crisp spring snap-back physics.
 - **🃏 Authentic Deck & Bonus Spawn Algorithm**:
   - 12-card starter deck (`4x 1, 4x 2, 4x 3`) grab-bag system.
   - Bonus high-card spawning (`+` hint) when maximum tile on board reaches $\ge 48$.
