@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -73,12 +75,16 @@ fun GameOverDialog(
 
     Dialog(
         onDismissRequest = onDismissToViewBoard,
-        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+                .fillMaxWidth(0.90f)
+                .widthIn(max = 380.dp)
                 .shadow(12.dp, RoundedCornerShape(24.dp)),
             shape = RoundedCornerShape(24.dp),
             color = if (isDarkTheme) BoardPlateDark else BoardBackgroundLight
@@ -87,7 +93,7 @@ fun GameOverDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -189,6 +195,7 @@ fun GameOverDialog(
                             .fillMaxWidth()
                             .height(44.dp),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = if (isDarkTheme) EmptyCellDark else EmptyCellLight
                         )
@@ -203,7 +210,9 @@ fun GameOverDialog(
                         Text(
                             text = stringResource(R.string.undo_last_move),
                             fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
                             maxLines = 1,
+                            softWrap = false,
                             color = if (isDarkTheme) TextPrimaryDark else TextPrimaryLight
                         )
                     }
@@ -212,7 +221,7 @@ fun GameOverDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedButton(
                         onClick = {
@@ -220,19 +229,22 @@ fun GameOverDialog(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .height(50.dp),
-                        shape = RoundedCornerShape(12.dp)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Icon(
                             Icons.Default.Share,
                             contentDescription = stringResource(R.string.share),
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = stringResource(R.string.share),
                             fontWeight = FontWeight.Bold,
-                            maxLines = 1
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
 
@@ -240,21 +252,24 @@ fun GameOverDialog(
                         onClick = onPlayAgain,
                         modifier = Modifier
                             .weight(1.3f)
-                            .height(50.dp),
+                            .height(48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Card1Bg),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Icon(
                             Icons.Default.Refresh,
                             contentDescription = stringResource(R.string.play_again),
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = stringResource(R.string.play_again),
                             fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
                             color = Color.White,
-                            maxLines = 1
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }

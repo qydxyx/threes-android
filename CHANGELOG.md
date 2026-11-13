@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.2 (versionCode 9)
+
+### Fixes
+- Fixed `GameOverDialog` button text truncation (e.g. `分享` -> `分`, `再来一局` -> `再来一`) by using `usePlatformDefaultWidth = false` (`fillMaxWidth(0.90f)` capped at `380.dp`), removing redundant outer `Surface` padding, and setting compact button `ContentPadding` with `softWrap = false`.
+- Applied consistent `fillMaxWidth(0.90f).widthIn(max = 400.dp)` sizing to `SettingsDialog`.
+
 ## v1.2.1 (versionCode 8)
 
 ### Fixes
