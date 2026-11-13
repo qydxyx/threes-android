@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.1 (versionCode 8)
+
+### Fixes
+- Fixed `settleJob` cancellation `finally` race in `GameBoardView` that cleared `activeDirection` and `movableCells` mid-drag during consecutive swipes.
+- Replaced `awaitTouchSlopOrCancellation` + `drag` with direct `awaitPointerEvent` tracking from `down.position` (5dp lock threshold, zero slop distance loss), included pointer-up samples in `VelocityTracker`, tuned thresholds (`34%` distance or `550 px/s` + `8%` flick), and flushed any in-flight commit immediately when a new touch begins.
+
 ## v1.2.0 (versionCode 7)
 
 ### Fixes & Physics

@@ -8,8 +8,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +24,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,8 +36,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -80,12 +79,13 @@ fun GameBoardView(
     // lambdas so drag movement never triggers Composable recomposition or relayout.
     val dragOffsetPx = remember { mutableFloatStateOf(0f) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
+    var settleToken by remember { mutableIntStateOf(0) }
+    var pendingCommitDir by remember { mutableStateOf<Direction?>(null) }
 
     var activeDirection by remember { mutableStateOf<Direction?>(null) }
     var movableLineIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
     var movableCells by remember { mutableStateOf<Set<Pair<Int, Int>>>(emptySet()) }
     var hasReachedThreshold by remember { mutableStateOf(false) }
-    var isCommittingMove by remember { mutableStateOf(false) }
 
     val currentOnMoveRequested by rememberUpdatedState(onMoveRequested)
     val currentOnSlideCommitStarted by rememberUpdatedState(onSlideCommitStarted)
@@ -129,16 +129,25 @@ fun GameBoardView(
                 .background(if (isDarkTheme) BoardPlateDark else BoardPlateLight)
                 .pointerInput(Unit) {
                     val velocityTracker = VelocityTracker()
+                    val lockThresholdPx = 5.dp.toPx()
+                    val flickUpThresholdPx = 8.dp.toPx()
+                    val commitFraction = 0.34f
+
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        if (isCommittingMove) {
-                            do {
-                                val event = awaitPointerEvent()
-                            } while (event.changes.any { it.pressed })
-                            return@awaitEachGesture
+
+                        // Invalidate any in-flight settle/snap animation before touching shared state
+                        settleToken++
+                        settleJob?.cancel()
+                        settleJob = null
+
+                        // If the previous swipe's short commit slide-out was still animating,
+                        // flush the state commit immediately so rapid back-to-back swipes never stall.
+                        pendingCommitDir?.let { committedDir ->
+                            pendingCommitDir = null
+                            currentOnMoveRequested(committedDir)
                         }
 
-                        settleJob?.cancel()
                         dragOffsetPx.floatValue = 0f
                         activeDirection = null
                         movableLineIndices = emptyList()
@@ -148,31 +157,23 @@ fun GameBoardView(
                         velocityTracker.resetTracking()
                         velocityTracker.addPosition(down.uptimeMillis, down.position)
 
-                        var totalDelta = Offset.Zero
-                        var hasLocked = false
+                        var lockedDir: Direction? = null
+                        var lockedCells: Set<Pair<Int, Int>> = emptySet()
+                        var finishedNormally = false
 
-                        val dragStart = awaitTouchSlopOrCancellation(down.id) { change, over ->
-                            change.consume()
-                            velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            totalDelta = over
-                        }
-
-                        if (dragStart == null) {
-                            return@awaitEachGesture
-                        }
-
-                        fun tryLockAndUpdate(delta: Offset) {
+                        fun tryLockAndUpdate(delta: Offset, minLockPx: Float) {
                             val liveCellSize = cellSizePxState.floatValue.coerceAtLeast(1f)
-                            if (!hasLocked && delta.getDistance() > 1f) {
-                                hasLocked = true
+                            if (lockedDir == null && delta.getDistance() >= minLockPx) {
                                 val dir = if (abs(delta.x) > abs(delta.y)) {
                                     if (delta.x > 0) Direction.RIGHT else Direction.LEFT
                                 } else {
                                     if (delta.y > 0) Direction.DOWN else Direction.UP
                                 }
+                                lockedDir = dir
                                 activeDirection = dir
                                 val lines = currentGetMovableLines(dir)
                                 val cells = currentGetMovableCells(dir)
+                                lockedCells = cells
                                 movableLineIndices = lines
                                 movableCells = cells
                                 if (cells.isEmpty()) {
@@ -180,9 +181,9 @@ fun GameBoardView(
                                 }
                             }
 
-                            val dir = activeDirection
-                            if (hasLocked && dir != null) {
-                                val hasMovable = movableCells.isNotEmpty()
+                            val dir = lockedDir
+                            if (dir != null) {
+                                val hasMovable = lockedCells.isNotEmpty()
                                 val rawDelta = when (dir) {
                                     Direction.LEFT -> delta.x.coerceIn(-liveCellSize, 0f)
                                     Direction.RIGHT -> delta.x.coerceIn(0f, liveCellSize)
@@ -191,7 +192,7 @@ fun GameBoardView(
                                 }
                                 val targetOffset = if (hasMovable) rawDelta else rawDelta * 0.18f
                                 if (hasMovable) {
-                                    val isPastThreshold = abs(targetOffset) >= liveCellSize * 0.38f
+                                    val isPastThreshold = abs(targetOffset) >= liveCellSize * commitFraction
                                     if (isPastThreshold != hasReachedThreshold) {
                                         hasReachedThreshold = isPastThreshold
                                         currentOnDragThresholdReached()
@@ -201,18 +202,33 @@ fun GameBoardView(
                             }
                         }
 
-                        tryLockAndUpdate(totalDelta)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
 
-                        val finishedNormally = drag(dragStart.id) { change ->
-                            change.consume()
                             velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            totalDelta += change.positionChange()
-                            tryLockAndUpdate(totalDelta)
+                            val delta = change.position - down.position
+
+                            if (change.changedToUpIgnoreConsumed()) {
+                                change.consume()
+                                tryLockAndUpdate(delta, flickUpThresholdPx)
+                                finishedNormally = true
+                                break
+                            }
+
+                            if (change.isConsumed) {
+                                break
+                            }
+
+                            tryLockAndUpdate(delta, lockThresholdPx)
+                            if (lockedDir != null) {
+                                change.consume()
+                            }
                         }
 
-                        val currentDir = activeDirection
+                        val currentDir = lockedDir
                         val currentOffset = dragOffsetPx.floatValue
-                        val hasMovable = movableCells.isNotEmpty()
+                        val hasMovable = lockedCells.isNotEmpty()
                         val liveCellSize = cellSizePxState.floatValue.coerceAtLeast(1f)
                         val velocity = velocityTracker.calculateVelocity()
                         val axisVelocity = when (currentDir) {
@@ -226,14 +242,15 @@ fun GameBoardView(
                         val shouldCommit = finishedNormally &&
                             currentDir != null &&
                             hasMovable &&
-                            (abs(currentOffset) >= liveCellSize * 0.38f ||
-                                (axisVelocity >= 700f && abs(currentOffset) >= liveCellSize * 0.10f))
+                            (abs(currentOffset) >= liveCellSize * commitFraction ||
+                                (axisVelocity >= 550f &&
+                                    abs(currentOffset) >= maxOf(flickUpThresholdPx, liveCellSize * 0.08f)))
 
-                        settleJob?.cancel()
+                        val myToken = ++settleToken
                         settleJob = coroutineScope.launch {
                             try {
                                 if (shouldCommit && currentDir != null) {
-                                    isCommittingMove = true
+                                    pendingCommitDir = currentDir
                                     currentOnSlideCommitStarted()
                                     val targetFullSlide = when (currentDir) {
                                         Direction.LEFT, Direction.UP -> -liveCellSize
@@ -251,10 +268,15 @@ fun GameBoardView(
                                             easing = FastOutLinearInEasing
                                         )
                                     ) { value, _ ->
-                                        dragOffsetPx.floatValue = value
+                                        if (myToken == settleToken) {
+                                            dragOffsetPx.floatValue = value
+                                        }
                                     }
-                                    currentOnMoveRequested(currentDir)
-                                    dragOffsetPx.floatValue = 0f
+                                    if (myToken == settleToken && pendingCommitDir == currentDir) {
+                                        pendingCommitDir = null
+                                        currentOnMoveRequested(currentDir)
+                                        dragOffsetPx.floatValue = 0f
+                                    }
                                 } else {
                                     if (hasMovable && abs(currentOffset) > 10f) {
                                         currentOnSnapBack()
@@ -267,15 +289,19 @@ fun GameBoardView(
                                             stiffness = Spring.StiffnessMedium
                                         )
                                     ) { value, _ ->
-                                        dragOffsetPx.floatValue = value
+                                        if (myToken == settleToken) {
+                                            dragOffsetPx.floatValue = value
+                                        }
                                     }
                                 }
                             } finally {
-                                isCommittingMove = false
-                                activeDirection = null
-                                movableLineIndices = emptyList()
-                                movableCells = emptySet()
-                                hasReachedThreshold = false
+                                if (myToken == settleToken) {
+                                    pendingCommitDir = null
+                                    activeDirection = null
+                                    movableLineIndices = emptyList()
+                                    movableCells = emptySet()
+                                    hasReachedThreshold = false
+                                }
                             }
                         }
                     }
