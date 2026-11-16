@@ -39,6 +39,7 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.threes.game.model.Direction
@@ -69,11 +70,12 @@ fun GameBoardView(
     onDragBlocked: () -> Unit = {},
     onSnapBack: () -> Unit = {},
     isDarkTheme: Boolean = false,
+    outerPadding: Dp = 16.dp,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    // Live measured width of a single inner grid cell (inside outer 16.dp and inner 8.dp padding).
+    // Live measured width of a single inner grid cell (inside outer padding and inner 8.dp padding).
     val cellSizePxState = remember { mutableFloatStateOf(250f) }
 
     // Synchronous float state for 120Hz/240Hz finger tracking — read ONLY inside graphicsLayer
@@ -126,7 +128,7 @@ fun GameBoardView(
         Box(
             modifier = Modifier
                 .size(boardSide)
-                .padding(16.dp)
+                .padding(outerPadding)
                 .shadow(6.dp, RoundedCornerShape(20.dp))
                 .clip(RoundedCornerShape(20.dp))
                 .background(if (isDarkTheme) BoardPlateDark else BoardPlateLight)

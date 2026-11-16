@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -24,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.threes.game.R
 import com.threes.game.model.Tile
+import com.threes.game.ui.theme.Card1Edge
+import com.threes.game.ui.theme.Card2Edge
+import com.threes.game.ui.theme.Card3Edge
 import com.threes.game.ui.theme.NextHint1
 import com.threes.game.ui.theme.NextHint2
 import com.threes.game.ui.theme.NextHint3
@@ -34,7 +38,7 @@ import com.threes.game.ui.theme.TextSecondaryDark
 import com.threes.game.ui.theme.TextSecondaryLight
 
 @Composable
-fun NextTileBar(
+fun NextTileBadge(
     nextTile: Tile,
     isDarkTheme: Boolean = false,
     modifier: Modifier = Modifier
@@ -44,6 +48,13 @@ fun NextTileBar(
         nextTile.isOne -> NextHint1
         nextTile.isTwo -> NextHint2
         else -> if (isDarkTheme) NextHint3Dark else NextHint3
+    }
+
+    val edgeColor = when {
+        nextTile.isBonus -> Color(0xFFB8860B)
+        nextTile.isOne -> Card1Edge
+        nextTile.isTwo -> Card2Edge
+        else -> Card3Edge
     }
 
     val animatedColor by animateColorAsState(targetValue = barColor, label = "nextColor")
@@ -68,6 +79,42 @@ fun NextTileBar(
         else -> "3"
     }
 
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 52.dp)
+            .height(30.dp)
+            .shadow(2.dp, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(edgeColor)
+    ) {
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = 52.dp)
+                .fillMaxHeight(0.90f)
+                .clip(RoundedCornerShape(7.dp))
+                .background(animatedColor)
+                .padding(horizontal = 10.dp)
+                .align(Alignment.TopCenter),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = labelText,
+                fontSize = if (nextTile.isBonus && nextTile.bonusCandidates.size > 1) 12.sp else 15.sp,
+                fontWeight = FontWeight.Black,
+                color = textColor,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+@Composable
+fun NextTileBar(
+    nextTile: Tile,
+    isDarkTheme: Boolean = false,
+    modifier: Modifier = Modifier
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -84,24 +131,10 @@ fun NextTileBar(
             modifier = Modifier.padding(end = 12.dp)
         )
 
-        Box(
-            modifier = Modifier
-                .defaultMinSize(minWidth = 68.dp)
-                .height(30.dp)
-                .shadow(2.dp, RoundedCornerShape(8.dp))
-                .clip(RoundedCornerShape(8.dp))
-                .background(animatedColor)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = labelText,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Black,
-                color = textColor,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
+        NextTileBadge(
+            nextTile = nextTile,
+            isDarkTheme = isDarkTheme,
+            modifier = Modifier.defaultMinSize(minWidth = 68.dp)
+        )
     }
 }

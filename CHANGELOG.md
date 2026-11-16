@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.5 (versionCode 12)
+
+### Improvements
+- Redesigned portrait layout in `GameScreen`, `GameBoardView`, and `NextTileBar` specifically for single-hand operation on tall (20:9+) smartphones:
+  - **Upper Display Zone**: Centered `THREES!` wordmark above a unified, board-aligned `PortraitInfoHud` card displaying `得分` (Score), `最高` (Best), and miniature 3D `下张` (`NextTileBadge`) preview.
+  - **Lower Single-Hand Thumb Zone**: Natural breathing space separates the display header from the lower play cluster; enlarged the 4×4 board (`outerPadding = 6.dp`) and anchored all four interactive controls (`设置`, `图鉴`, `撤回`, `新游戏`) directly below the board inside a unified, flush-aligned `PortraitBottomThumbDock`.
+
 ## v1.2.4 (versionCode 11)
 
 ### Improvements
