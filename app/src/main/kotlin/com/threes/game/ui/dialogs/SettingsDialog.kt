@@ -62,6 +62,10 @@ fun SettingsDialog(
     onHapticsEnabledChange: (Boolean) -> Unit,
     isUndoEnabled: Boolean,
     onUndoEnabledChange: (Boolean) -> Unit,
+    isPortraitLocked: Boolean,
+    onPortraitLockedChange: (Boolean) -> Unit,
+    isFastMode: Boolean,
+    onFastModeChange: (Boolean) -> Unit,
     onResetHighScore: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -148,6 +152,30 @@ fun SettingsDialog(
                     title = stringResource(R.string.undo_toggle),
                     checked = isUndoEnabled,
                     onCheckedChange = onUndoEnabledChange,
+                    isDarkTheme = isNightMode
+                )
+
+                HorizontalDivider(
+                    color = if (isNightMode) EmptyCellDark else EmptyCellLight,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+
+                SettingSwitchRow(
+                    title = stringResource(R.string.portrait_lock),
+                    checked = isPortraitLocked,
+                    onCheckedChange = onPortraitLockedChange,
+                    isDarkTheme = isNightMode
+                )
+
+                HorizontalDivider(
+                    color = if (isNightMode) EmptyCellDark else EmptyCellLight,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+
+                SettingSwitchRow(
+                    title = stringResource(R.string.fast_mode),
+                    checked = isFastMode,
+                    onCheckedChange = onFastModeChange,
                     isDarkTheme = isNightMode
                 )
 

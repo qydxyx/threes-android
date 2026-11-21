@@ -405,4 +405,71 @@ class GameEngineTest {
             engine.getMergingCells(Direction.DOWN)
         )
     }
+
+    @Test
+    fun testFastModeOpeningBoardScalesWithUnlockedTileAndPreservesDeck() {
+        val engine = GameEngine(Random(2026))
+        engine.startNewGame(fastMode = true, maxUnlockedTile = 768)
+
+        var totalTiles = 0
+        val largeTileValues = mutableListOf<Int>()
+        for (r in 0 until 4) {
+            for (c in 0 until 4) {
+                val tile = engine.grid[r][c]
+                if (tile != null) {
+                    totalTiles++
+                    if (tile.value >= 6) {
+                        largeTileValues.add(tile.value)
+                    }
+                }
+            }
+        }
+        assertEquals(9, totalTiles)
+        // For maxUnlockedTile = 768, lead limit = 768 / 8 = 96 -> large cluster is [96, 48, 24]
+        assertEquals(listOf(96, 48, 24), largeTileValues.sortedDescending())
+        assertEquals(96, engine.maxTileValue)
+    }
+
+    @Test
+    fun testFastModePlacesLargeTilesInPlayerPreferredStationaryCorner() {
+        val engine = GameEngine(Random(42))
+        // Simulate a player who keeps their largest tiles parked in the bottom-left corner (3, 0),
+        // with supporting large tiles at (3, 1) and (2, 0), while moving other tiles on the board.
+        val habitBoard = listOf(
+            listOf(null, Tile.create(1), Tile.create(2), null),
+            listOf(null, null, null, null),
+            listOf(Tile.create(24), null, null, null),
+            listOf(Tile.create(96), Tile.create(48), Tile.create(3), Tile.create(3))
+        )
+        engine.restoreFromState(
+            loadedGrid = habitBoard,
+            loadedNextTile = Tile.create(1),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 1000,
+            loadedMaxTile = 96,
+            loadedMoveCount = 25
+        )
+
+        // Swiping LEFT: (3, 0)=96, (3, 1)=48, and (2, 0)=24 stay stationary while row 0 and (3,2)+(3,3) merge!
+        val moveRes = engine.move(Direction.LEFT)
+        assertTrue(moveRes.moved)
+
+        val weights = engine.getCellHabitWeights()
+        // Verify bottom-left (3, 0) recorded the highest weight, followed by (3, 1) and (2, 0)
+        val w30 = weights[3 * 4 + 0]
+        val w31 = weights[3 * 4 + 1]
+        val w20 = weights[2 * 4 + 0]
+        assertTrue("Expected bottom-left anchor (3,0) to have highest habit weight", w30 > w31)
+        assertTrue("Expected support cell (3,1) to have higher weight than (2,0)", w31 > w20)
+        assertTrue("Expected support cell (2,0) to have positive habit weight", w20 > 0f)
+
+        // Now start a new Fast Mode game (with maxUnlockedTile = 384 -> large tiles [48, 24, 12])
+        engine.startNewGame(fastMode = true, maxUnlockedTile = 384)
+
+        // Verify the largest starting tile (48) is placed in the user's preferred corner (3, 0),
+        // second largest (24) at (3, 1), and third largest (12) at (2, 0)!
+        assertEquals(48, engine.grid[3][0]?.value)
+        assertEquals(24, engine.grid[3][1]?.value)
+        assertEquals(12, engine.grid[2][0]?.value)
+    }
 }

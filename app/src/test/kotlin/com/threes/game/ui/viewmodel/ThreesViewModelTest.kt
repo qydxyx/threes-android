@@ -25,8 +25,17 @@ private class FakeGameStorage : GameStorage {
     override var isSoundEnabled: Boolean = true
     override var isHapticsEnabled: Boolean = true
     override var isUndoEnabled: Boolean = true
+    override var isPortraitLocked: Boolean = true
+    override var isFastMode: Boolean = false
+    private var habitWeights: List<Float> = List(16) { 0f }
     val unlocked = mutableSetOf(1, 2, 3)
     var savedGame: SavedGame? = null
+
+    override fun getCellHabitWeights(): List<Float> = habitWeights
+
+    override fun saveCellHabitWeights(weights: List<Float>) {
+        habitWeights = List(16) { idx -> weights.getOrElse(idx) { 0f } }
+    }
 
     override fun getUnlockedCharacters(): Set<Int> = unlocked.toSet()
 
@@ -209,5 +218,37 @@ class ThreesViewModelTest {
         viewModel.onStartNewGame()
         assertFalse(viewModel.uiState.value.isGameOver)
         assertNotNull(storage.savedGame)
+    }
+
+    @Test
+    fun testPortraitLockAndFastModeHabitPlacementInViewModel() {
+        storage.unlocked.addAll(listOf(6, 12, 24, 48, 96, 192, 384, 768))
+        // Pre-populate habit preference favoring top-right corner (0, 3) with support at (0, 2) and (1, 3)
+        val customWeights = MutableList(16) { 0f }
+        customWeights[0 * 4 + 3] = 20f
+        customWeights[0 * 4 + 2] = 12f
+        customWeights[1 * 4 + 3] = 8f
+        storage.saveCellHabitWeights(customWeights)
+
+        val engine = GameEngine(Random(50))
+        val viewModel = ThreesViewModel(storage, sound, engine, testScope)
+
+        assertTrue(viewModel.uiState.value.isPortraitLocked)
+        assertFalse(viewModel.uiState.value.isFastMode)
+
+        viewModel.setPortraitLocked(false)
+        assertFalse(storage.isPortraitLocked)
+        assertFalse(viewModel.uiState.value.isPortraitLocked)
+
+        // Enabling Fast Mode at moveCount == 0 immediately deals a Fast Mode board using habit corner (0, 3)
+        viewModel.setFastMode(true)
+        assertTrue(storage.isFastMode)
+        assertTrue(viewModel.uiState.value.isFastMode)
+
+        val grid = viewModel.uiState.value.grid
+        // maxUnlocked = 768 => lead = 96 at (0, 3), 48 at (0, 2), 24 at (1, 3)
+        assertEquals(96, grid[0][3]?.value)
+        assertEquals(48, grid[0][2]?.value)
+        assertEquals(24, grid[1][3]?.value)
     }
 }

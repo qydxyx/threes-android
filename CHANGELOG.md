@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.7 (versionCode 14)
+
+### Improvements
+- Added **Portrait Orientation Lock** toggle in `SettingsDialog`, `MainActivity`, and `PreferencesRepository` (`SCREEN_ORIENTATION_PORTRAIT` vs `SCREEN_ORIENTATION_UNSPECIFIED`).
+- Added **Fast Mode (Big Tile Start)** in `GameEngine`, `ThreesViewModel`, and `SettingsDialog`:
+  - Deals 3 descending high-value starting tiles scaled to your unlocked progression (`max(48, maxUnlockedTile / 8)`, capped at `768`) alongside 6 balanced deck cards, immediately activating high-card bonus draws.
+  - Learns your spatial tile-stacking habits across moves (`cellHabitWeights` in `GameEngine` and `PreferencesRepository`), giving `3.0x` stationary weight to large tiles you park in a corner/edge and placing Fast Mode's starting large-tile cluster directly into your preferred corner and adjacent support cells.
+
 ## v1.2.5 (versionCode 12)
 
 ### Improvements

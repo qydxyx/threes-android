@@ -50,11 +50,46 @@ class GameEngine(
 
     private var previousSnapshot: GameSnapshot? = null
 
+    private val cellHabitWeights = FloatArray(size * size)
+
     init {
         startNewGame()
     }
 
-    fun startNewGame() {
+    fun getCellHabitWeights(): List<Float> = cellHabitWeights.toList()
+
+    fun setCellHabitWeights(weights: List<Float>) {
+        for (i in 0 until (size * size)) {
+            val w = weights.getOrNull(i) ?: 0f
+            cellHabitWeights[i] = if (w.isFinite() && w >= 0f) w else 0f
+        }
+    }
+
+    /**
+     * Seeds spatial habit weights from the current board's large tiles (e.g. when migrating an existing saved game).
+     */
+    fun observeCurrentBoardHabits() {
+        if (maxTileValue < 6) return
+        val threshold = maxOf(6, maxTileValue / 4)
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val tile = grid[r][c] ?: continue
+                if (tile.value < threshold) continue
+                val tierWeight = when {
+                    tile.value >= maxTileValue -> 1.0f
+                    tile.value >= maxTileValue / 2 -> 0.55f
+                    else -> 0.25f
+                }
+                val idx = r * size + c
+                cellHabitWeights[idx] = (cellHabitWeights[idx] + tierWeight * 2.0f).coerceAtMost(1000f)
+            }
+        }
+    }
+
+    fun startNewGame(
+        fastMode: Boolean = false,
+        maxUnlockedTile: Int = 3
+    ) {
         grid = Array(size) { Array(size) { null } }
         deck.clear()
         refillDeck()
@@ -63,22 +98,48 @@ class GameEngine(
         previousSnapshot = null
         lastMoveDirection = null
 
-        // Choose 9 random positions out of 16
         val allPositions = mutableListOf<Pair<Int, Int>>()
         for (r in 0 until size) {
             for (c in 0 until size) {
                 allPositions.add(r to c)
             }
         }
-        allPositions.shuffle(random)
 
-        // Deal 9 cards from deck onto board
-        for (i in 0 until 9) {
-            val (r, c) = allPositions[i]
-            val value = drawFromDeck()
-            grid[r][c] = Tile.create(value, isNew = true)
-            if (value > maxTileValue) {
-                maxTileValue = value
+        if (fastMode) {
+            val largeValues = buildFastModeLargeTiles(maxUnlockedTile)
+            val largePositions = selectFastModeLargeTilePositions(largeValues.size)
+            for (i in largePositions.indices) {
+                val (r, c) = largePositions[i]
+                val value = largeValues[i]
+                grid[r][c] = Tile.create(value, isBonus = true, isNew = true)
+                if (value > maxTileValue) {
+                    maxTileValue = value
+                }
+            }
+
+            val remainingPositions = allPositions.filter { it !in largePositions }.toMutableList()
+            remainingPositions.shuffle(random)
+            val baseDealCount = (9 - largePositions.size).coerceAtLeast(0)
+            for (i in 0 until baseDealCount) {
+                val (r, c) = remainingPositions[i]
+                val value = drawFromDeck()
+                grid[r][c] = Tile.create(value, isNew = true)
+                if (value > maxTileValue) {
+                    maxTileValue = value
+                }
+            }
+        } else {
+            // Choose 9 random positions out of 16
+            allPositions.shuffle(random)
+
+            // Deal 9 cards from deck onto board
+            for (i in 0 until 9) {
+                val (r, c) = allPositions[i]
+                val value = drawFromDeck()
+                grid[r][c] = Tile.create(value, isNew = true)
+                if (value > maxTileValue) {
+                    maxTileValue = value
+                }
             }
         }
 
@@ -86,6 +147,111 @@ class GameEngine(
         nextTile = drawNextTile()
         recalculateScore()
         isGameOver = checkGameOver()
+    }
+
+    private fun buildFastModeLargeTiles(maxUnlockedTile: Int): List<Int> {
+        val targetLimit = maxOf(48, maxUnlockedTile / 8).coerceAtMost(768)
+        var leadValue = 6
+        while (leadValue * 2 <= targetLimit) {
+            leadValue *= 2
+        }
+        val secondValue = (leadValue / 2).coerceAtLeast(6)
+        val thirdValue = (secondValue / 2).coerceAtLeast(6)
+        return listOf(leadValue, secondValue, thirdValue)
+    }
+
+    private fun selectFastModeLargeTilePositions(count: Int): List<Pair<Int, Int>> {
+        if (count <= 0) return emptyList()
+        val hasHabitHistory = cellHabitWeights.any { it > 0.001f }
+
+        val anchorPos: Pair<Int, Int> = if (hasHabitHistory) {
+            var bestPos = (size - 1) to (size - 1)
+            var bestScore = Float.NEGATIVE_INFINITY
+            var bestDirect = Float.NEGATIVE_INFINITY
+            for (r in 0 until size) {
+                for (c in 0 until size) {
+                    val direct = cellHabitWeights[r * size + c]
+                    var neighborSum = 0f
+                    for ((nr, nc) in getOrthogonalNeighbors(r, c)) {
+                        neighborSum += cellHabitWeights[nr * size + nc]
+                    }
+                    val structuralFactor = when {
+                        isCorner(r, c) -> 1.15f
+                        isEdge(r, c) -> 1.05f
+                        else -> 0.85f
+                    }
+                    val score = (direct + 0.18f * neighborSum) * structuralFactor +
+                        when {
+                            isCorner(r, c) -> 0.002f
+                            isEdge(r, c) -> 0.001f
+                            else -> 0f
+                        }
+                    if (score > bestScore || (score == bestScore && direct > bestDirect)) {
+                        bestScore = score
+                        bestDirect = direct
+                        bestPos = r to c
+                    }
+                }
+            }
+            bestPos
+        } else {
+            val corners = listOf(0 to 0, 0 to (size - 1), (size - 1) to 0, (size - 1) to (size - 1))
+            corners[random.nextInt(corners.size)]
+        }
+
+        val placed = mutableListOf(anchorPos)
+        while (placed.size < count) {
+            val candidates = mutableSetOf<Pair<Int, Int>>()
+            for ((pr, pc) in placed) {
+                for (neighbor in getOrthogonalNeighbors(pr, pc)) {
+                    if (neighbor !in placed) {
+                        candidates.add(neighbor)
+                    }
+                }
+            }
+            if (candidates.isEmpty()) break
+
+            val nextPos = candidates.maxWithOrNull(
+                Comparator { a, b ->
+                    val wa = cellHabitWeights[a.first * size + a.second]
+                    val wb = cellHabitWeights[b.first * size + b.second]
+                    val structuralA = when {
+                        isCorner(a.first, a.second) -> 0.02f
+                        isEdge(a.first, a.second) -> 0.01f
+                        else -> 0f
+                    }
+                    val structuralB = when {
+                        isCorner(b.first, b.second) -> 0.02f
+                        isEdge(b.first, b.second) -> 0.01f
+                        else -> 0f
+                    }
+                    val distA = kotlin.math.abs(a.first - anchorPos.first) + kotlin.math.abs(a.second - anchorPos.second)
+                    val distB = kotlin.math.abs(b.first - anchorPos.first) + kotlin.math.abs(b.second - anchorPos.second)
+                    val scoreA = wa + structuralA - distA * 0.001f
+                    val scoreB = wb + structuralB - distB * 0.001f
+                    scoreA.compareTo(scoreB)
+                }
+            ) ?: break
+            placed.add(nextPos)
+        }
+        return placed
+    }
+
+    private fun isCorner(r: Int, c: Int): Boolean {
+        return (r == 0 || r == size - 1) && (c == 0 || c == size - 1)
+    }
+
+    private fun isEdge(r: Int, c: Int): Boolean {
+        return r == 0 || r == size - 1 || c == 0 || c == size - 1
+    }
+
+    private fun getOrthogonalNeighbors(r: Int, c: Int): List<Pair<Int, Int>> {
+        val result = mutableListOf<Pair<Int, Int>>()
+        if (r > 0) result.add((r - 1) to c)
+        if (r < size - 1) result.add((r + 1) to c)
+        if (c > 0) result.add(r to (c - 1))
+        if (c < size - 1) result.add(r to (c + 1))
+        return result
     }
 
     private fun refillDeck() {
@@ -219,6 +385,16 @@ class GameEngine(
             return MoveResult(false, emptyList(), emptyList(), null, null)
         }
 
+        val movableCells = getMovableCells(direction)
+        val stationaryBeforeMove = mutableSetOf<Pair<Int, Int>>()
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                if (grid[r][c] != null && (r to c) !in movableCells) {
+                    stationaryBeforeMove.add(r to c)
+                }
+            }
+        }
+
         // Save snapshot for undo
         saveSnapshot()
 
@@ -277,6 +453,8 @@ class GameEngine(
             spawnedPos = null
         }
 
+        recordMoveHabit(stationaryBeforeMove)
+
         moveCount++
         lastMoveDirection = direction
         recalculateScore()
@@ -289,6 +467,35 @@ class GameEngine(
             spawnedTile = spawnedTile,
             spawnedPosition = spawnedPos
         )
+    }
+
+    private fun recordMoveHabit(stationaryCells: Set<Pair<Int, Int>>) {
+        if (maxTileValue < 6) return
+        for (i in cellHabitWeights.indices) {
+            cellHabitWeights[i] *= 0.985f
+        }
+        val threshold = maxOf(6, maxTileValue / 4)
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val tile = grid[r][c] ?: continue
+                if (tile.value < threshold) continue
+                val tierWeight = when {
+                    tile.value >= maxTileValue -> 1.0f
+                    tile.value >= maxTileValue / 2 -> 0.55f
+                    else -> 0.25f
+                }
+                val rankMultiplier = when {
+                    tile.value >= 96 -> 1.5f
+                    tile.value >= 24 -> 1.25f
+                    else -> 1.0f
+                }
+                val stationaryMultiplier = if ((r to c) in stationaryCells) 3.0f else 0.45f
+                val idx = r * size + c
+                cellHabitWeights[idx] = (
+                    cellHabitWeights[idx] + tierWeight * rankMultiplier * stationaryMultiplier
+                ).coerceAtMost(1000f)
+            }
+        }
     }
 
     private fun getLine(direction: Direction, lineIndex: Int): List<Tile?> {

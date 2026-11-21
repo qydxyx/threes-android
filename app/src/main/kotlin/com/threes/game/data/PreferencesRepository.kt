@@ -25,6 +25,10 @@ interface GameStorage {
     var isSoundEnabled: Boolean
     var isHapticsEnabled: Boolean
     var isUndoEnabled: Boolean
+    var isPortraitLocked: Boolean
+    var isFastMode: Boolean
+    fun getCellHabitWeights(): List<Float>
+    fun saveCellHabitWeights(weights: List<Float>)
     fun getUnlockedCharacters(): Set<Int>
     fun unlockCharacter(value: Int)
     fun saveGame(savedGame: SavedGame)
@@ -44,6 +48,9 @@ class PreferencesRepository(context: Context) : GameStorage {
         private const val KEY_SOUND_ENABLED = "sound_enabled"
         private const val KEY_HAPTICS_ENABLED = "haptics_enabled"
         private const val KEY_UNDO_ENABLED = "undo_enabled"
+        private const val KEY_PORTRAIT_LOCKED = "portrait_locked"
+        private const val KEY_FAST_MODE = "fast_mode"
+        private const val KEY_CELL_HABIT_WEIGHTS = "cell_habit_weights"
         private const val KEY_SAVED_GAME = "saved_game_state"
     }
 
@@ -74,6 +81,25 @@ class PreferencesRepository(context: Context) : GameStorage {
     override var isUndoEnabled: Boolean
         get() = prefs.getBoolean(KEY_UNDO_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_UNDO_ENABLED, value).apply()
+
+    override var isPortraitLocked: Boolean
+        get() = prefs.getBoolean(KEY_PORTRAIT_LOCKED, true)
+        set(value) = prefs.edit().putBoolean(KEY_PORTRAIT_LOCKED, value).apply()
+
+    override var isFastMode: Boolean
+        get() = prefs.getBoolean(KEY_FAST_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_FAST_MODE, value).apply()
+
+    override fun getCellHabitWeights(): List<Float> {
+        val raw = prefs.getString(KEY_CELL_HABIT_WEIGHTS, null) ?: return List(16) { 0f }
+        val parsed = raw.split(",").map { it.trim().toFloatOrNull() ?: 0f }
+        return List(16) { idx -> parsed.getOrElse(idx) { 0f } }
+    }
+
+    override fun saveCellHabitWeights(weights: List<Float>) {
+        val normalized = List(16) { idx -> weights.getOrElse(idx) { 0f } }
+        prefs.edit().putString(KEY_CELL_HABIT_WEIGHTS, normalized.joinToString(",")).apply()
+    }
 
     override fun getUnlockedCharacters(): Set<Int> {
         val stringSet = prefs.getStringSet(

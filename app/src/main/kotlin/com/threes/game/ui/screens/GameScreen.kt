@@ -318,6 +318,10 @@ fun GameScreen(
                 onHapticsEnabledChange = { viewModel.setHapticsEnabled(it) },
                 isUndoEnabled = uiState.isUndoEnabled,
                 onUndoEnabledChange = { viewModel.setUndoEnabled(it) },
+                isPortraitLocked = uiState.isPortraitLocked,
+                onPortraitLockedChange = { viewModel.setPortraitLocked(it) },
+                isFastMode = uiState.isFastMode,
+                onFastModeChange = { viewModel.setFastMode(it) },
                 onResetHighScore = { viewModel.resetHighScore() },
                 onDismiss = { viewModel.closeSettings() }
             )

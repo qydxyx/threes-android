@@ -37,6 +37,8 @@ data class GameUiState(
     val isSoundEnabled: Boolean = true,
     val isHapticsEnabled: Boolean = true,
     val isUndoEnabled: Boolean = true,
+    val isPortraitLocked: Boolean = true,
+    val isFastMode: Boolean = false,
     val isCastBookOpen: Boolean = false,
     val isSettingsOpen: Boolean = false
 )
@@ -65,6 +67,7 @@ class ThreesViewModel internal constructor(
     private fun loadSettingsAndState() {
         sound.soundEnabled = prefs.isSoundEnabled
         sound.hapticsEnabled = prefs.isHapticsEnabled
+        engine.setCellHabitWeights(prefs.getCellHabitWeights())
 
         val saved = prefs.loadGame()
         if (saved != null) {
@@ -79,13 +82,21 @@ class ThreesViewModel internal constructor(
                 loadedMoveCount = saved.moveCount,
                 loadedPreviousSnapshot = saved.previousSnapshot
             )
+            if (engine.getCellHabitWeights().all { it <= 0.001f } && engine.maxTileValue >= 6) {
+                engine.observeCurrentBoardHabits()
+                prefs.saveCellHabitWeights(engine.getCellHabitWeights())
+            }
             if (engine.score > baselineHighScore) {
                 hasBrokenRecordInSession = true
             }
         } else {
             baselineHighScore = prefs.highScore
             hasBrokenRecordInSession = false
-            engine.startNewGame()
+            val maxUnlocked = prefs.getUnlockedCharacters().maxOrNull() ?: 3
+            engine.startNewGame(
+                fastMode = prefs.isFastMode,
+                maxUnlockedTile = maxUnlocked
+            )
         }
 
         updateUiState()
@@ -154,6 +165,7 @@ class ThreesViewModel internal constructor(
             }
         }
 
+        prefs.saveCellHabitWeights(engine.getCellHabitWeights())
         saveCurrentGame()
         updateUiState(isGameOverDialogDismissed = false)
     }
@@ -178,9 +190,17 @@ class ThreesViewModel internal constructor(
 
     fun onStartNewGame() {
         gameOverAudioJob?.cancel()
+        if (engine.moveCount > 0 && engine.getCellHabitWeights().all { it <= 0.001f } && engine.maxTileValue >= 6) {
+            engine.observeCurrentBoardHabits()
+            prefs.saveCellHabitWeights(engine.getCellHabitWeights())
+        }
         baselineHighScore = prefs.highScore
         hasBrokenRecordInSession = false
-        engine.startNewGame()
+        val maxUnlocked = prefs.getUnlockedCharacters().maxOrNull() ?: 3
+        engine.startNewGame(
+            fastMode = prefs.isFastMode,
+            maxUnlockedTile = maxUnlocked
+        )
         sound.playSnap()
         saveCurrentGame()
         updateUiState(isGameOverDialogDismissed = false)
@@ -234,6 +254,19 @@ class ThreesViewModel internal constructor(
             isUndoEnabled = enabled,
             canUndo = enabled && engine.canUndo()
         )
+    }
+
+    fun setPortraitLocked(enabled: Boolean) {
+        prefs.isPortraitLocked = enabled
+        _uiState.value = _uiState.value.copy(isPortraitLocked = enabled)
+    }
+
+    fun setFastMode(enabled: Boolean) {
+        prefs.isFastMode = enabled
+        _uiState.value = _uiState.value.copy(isFastMode = enabled)
+        if (engine.moveCount == 0) {
+            onStartNewGame()
+        }
     }
 
     fun resetHighScore() {
@@ -293,7 +326,9 @@ class ThreesViewModel internal constructor(
             isNightMode = prefs.isNightMode,
             isSoundEnabled = prefs.isSoundEnabled,
             isHapticsEnabled = prefs.isHapticsEnabled,
-            isUndoEnabled = prefs.isUndoEnabled
+            isUndoEnabled = prefs.isUndoEnabled,
+            isPortraitLocked = prefs.isPortraitLocked,
+            isFastMode = prefs.isFastMode
         )
     }
 
