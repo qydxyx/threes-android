@@ -19,7 +19,7 @@
     <string name="haptics">触感震动</string>
     <string name="undo_toggle">启用撤回功能</string>
     <string name="portrait_lock">竖屏锁定</string>
-    <string name="fast_mode">Fast Mode（大数开局）</string>
+    <string name="fast_mode">Fast Mode</string>
     <string name="reset_high_score">重置最高分</string>
     <string name="reset_high_score_title">重置最高分？</string>
     <string name="reset_high_score_message">确定要清空历史最高分记录吗？</string>

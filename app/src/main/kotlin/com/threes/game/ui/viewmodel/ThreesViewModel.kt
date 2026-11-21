@@ -190,7 +190,7 @@ class ThreesViewModel internal constructor(
 
     fun onStartNewGame() {
         gameOverAudioJob?.cancel()
-        if (engine.moveCount > 0 && engine.getCellHabitWeights().all { it <= 0.001f } && engine.maxTileValue >= 6) {
+        if (engine.maxTileValue >= 6) {
             engine.observeCurrentBoardHabits()
             prefs.saveCellHabitWeights(engine.getCellHabitWeights())
         }
@@ -201,6 +201,7 @@ class ThreesViewModel internal constructor(
             fastMode = prefs.isFastMode,
             maxUnlockedTile = maxUnlocked
         )
+        prefs.saveCellHabitWeights(engine.getCellHabitWeights())
         sound.playSnap()
         saveCurrentGame()
         updateUiState(isGameOverDialogDismissed = false)

@@ -471,5 +471,29 @@ class GameEngineTest {
         assertEquals(48, engine.grid[3][0]?.value)
         assertEquals(24, engine.grid[3][1]?.value)
         assertEquals(12, engine.grid[2][0]?.value)
+
+        // Now suppose in the next game the user stacked their large tiles in the bottom-right corner (3, 3),
+        // with supporting tiles at (3, 2) and (2, 3):
+        val bottomRightBoard = listOf(
+            listOf(null, Tile.create(1), Tile.create(2), null),
+            listOf(null, null, null, null),
+            listOf(null, null, null, Tile.create(48)),
+            listOf(Tile.create(1), Tile.create(2), Tile.create(96), Tile.create(192))
+        )
+        engine.restoreFromState(
+            loadedGrid = bottomRightBoard,
+            loadedNextTile = Tile.create(3),
+            loadedDeck = listOf(1, 2, 3),
+            loadedScore = 3000,
+            loadedMaxTile = 192,
+            loadedMoveCount = 40
+        )
+
+        // Start a new Fast Mode game -> should immediately place large tiles in the bottom-right corner (3, 3)
+        // instead of sticking to the old bottom-left corner!
+        engine.startNewGame(fastMode = true, maxUnlockedTile = 384)
+        assertEquals(48, engine.grid[3][3]?.value)
+        assertEquals(24, engine.grid[3][2]?.value)
+        assertEquals(12, engine.grid[2][3]?.value)
     }
 }

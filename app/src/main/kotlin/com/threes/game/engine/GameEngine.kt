@@ -66,22 +66,33 @@ class GameEngine(
     }
 
     /**
-     * Seeds spatial habit weights from the current board's large tiles (e.g. when migrating an existing saved game).
+     * Captures the current board's large tile positions so the next Fast Mode game places its
+     * starting large tiles in the exact corner/cluster where the user stacked them in the previous game.
      */
     fun observeCurrentBoardHabits() {
-        if (maxTileValue < 6) return
-        val threshold = maxOf(6, maxTileValue / 4)
+        val boardMax = (0 until size).maxOf { r ->
+            (0 until size).maxOf { c -> grid[r][c]?.value ?: 0 }
+        }
+        val effectiveMax = maxOf(maxTileValue, boardMax)
+        if (effectiveMax < 6) return
+
+        // Reset weights to reflect the previous game's actual layout directly
+        for (i in cellHabitWeights.indices) {
+            cellHabitWeights[i] = 0f
+        }
+
         for (r in 0 until size) {
             for (c in 0 until size) {
                 val tile = grid[r][c] ?: continue
-                if (tile.value < threshold) continue
-                val tierWeight = when {
-                    tile.value >= maxTileValue -> 1.0f
-                    tile.value >= maxTileValue / 2 -> 0.55f
-                    else -> 0.25f
+                if (tile.value < 6) continue
+                val tierScore = when {
+                    tile.value >= effectiveMax -> 100f
+                    tile.value >= effectiveMax / 2 -> 60f
+                    tile.value >= effectiveMax / 4 -> 35f
+                    else -> 15f
                 }
                 val idx = r * size + c
-                cellHabitWeights[idx] = (cellHabitWeights[idx] + tierWeight * 2.0f).coerceAtMost(1000f)
+                cellHabitWeights[idx] = tierScore + tile.value * 0.05f
             }
         }
     }
@@ -90,6 +101,9 @@ class GameEngine(
         fastMode: Boolean = false,
         maxUnlockedTile: Int = 3
     ) {
+        if (moveCount > 0 && maxTileValue >= 6) {
+            observeCurrentBoardHabits()
+        }
         grid = Array(size) { Array(size) { null } }
         deck.clear()
         refillDeck()
@@ -472,7 +486,7 @@ class GameEngine(
     private fun recordMoveHabit(stationaryCells: Set<Pair<Int, Int>>) {
         if (maxTileValue < 6) return
         for (i in cellHabitWeights.indices) {
-            cellHabitWeights[i] *= 0.985f
+            cellHabitWeights[i] *= 0.75f
         }
         val threshold = maxOf(6, maxTileValue / 4)
         for (r in 0 until size) {
@@ -480,19 +494,14 @@ class GameEngine(
                 val tile = grid[r][c] ?: continue
                 if (tile.value < threshold) continue
                 val tierWeight = when {
-                    tile.value >= maxTileValue -> 1.0f
-                    tile.value >= maxTileValue / 2 -> 0.55f
-                    else -> 0.25f
+                    tile.value >= maxTileValue -> 30.0f
+                    tile.value >= maxTileValue / 2 -> 16.0f
+                    else -> 8.0f
                 }
-                val rankMultiplier = when {
-                    tile.value >= 96 -> 1.5f
-                    tile.value >= 24 -> 1.25f
-                    else -> 1.0f
-                }
-                val stationaryMultiplier = if ((r to c) in stationaryCells) 3.0f else 0.45f
+                val stationaryMultiplier = if ((r to c) in stationaryCells) 2.5f else 1.0f
                 val idx = r * size + c
                 cellHabitWeights[idx] = (
-                    cellHabitWeights[idx] + tierWeight * rankMultiplier * stationaryMultiplier
+                    cellHabitWeights[idx] + tierWeight * stationaryMultiplier
                 ).coerceAtMost(1000f)
             }
         }
