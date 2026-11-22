@@ -496,4 +496,52 @@ class GameEngineTest {
         assertEquals(24, engine.grid[3][2]?.value)
         assertEquals(12, engine.grid[2][3]?.value)
     }
+
+    @Test
+    fun testOneTimeShuffleKeepsMaxTileAnchoredClearsUndoAndGuaranteesPlayableBoard() {
+        val engine = GameEngine(Random(1234))
+        // Deadlocked 4x4 board where max tile 96 is at (3, 3)
+        val deadGrid = listOf(
+            listOf(Tile.create(1), Tile.create(3), Tile.create(6), Tile.create(12)),
+            listOf(Tile.create(3), Tile.create(6), Tile.create(12), Tile.create(24)),
+            listOf(Tile.create(6), Tile.create(12), Tile.create(24), Tile.create(48)),
+            listOf(Tile.create(12), Tile.create(24), Tile.create(48), Tile.create(96))
+        )
+        val dummySnapshot = GameSnapshot(
+            grid = deadGrid,
+            score = 1000,
+            nextTile = Tile.create(1),
+            deck = listOf(2, 3),
+            maxTileValue = 96,
+            moveCount = 39
+        )
+        engine.restoreFromState(
+            loadedGrid = deadGrid,
+            loadedNextTile = Tile.create(1),
+            loadedDeck = listOf(2, 3),
+            loadedScore = 1599,
+            loadedMaxTile = 96,
+            loadedMoveCount = 40,
+            loadedPreviousSnapshot = dummySnapshot
+        )
+
+        assertTrue(engine.isGameOver)
+        assertTrue(engine.canUndo())
+        assertTrue(engine.canShuffle())
+        assertFalse(engine.hasUsedShuffle)
+
+        val shuffled = engine.shuffleBoard()
+        assertTrue(shuffled)
+        assertTrue(engine.hasUsedShuffle)
+        assertFalse(engine.canShuffle())
+        assertFalse("Expected board to have valid moves after shuffle", engine.isGameOver)
+        assertFalse("Expected undo snapshot to be cleared after shuffle", engine.canUndo())
+        // Max tile 96 must remain anchored at (3, 3)
+        assertEquals(96, engine.grid[3][3]?.value)
+        // Total tile values on board must remain identical (same score)
+        assertEquals(1599, engine.score)
+
+        // Second shuffle attempt in the same game must be rejected
+        assertFalse(engine.shuffleBoard())
+    }
 }

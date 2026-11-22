@@ -45,6 +45,9 @@ class GameEngine(
     var isGameOver: Boolean = false
         private set
 
+    var hasUsedShuffle: Boolean = false
+        private set
+
     var lastMoveDirection: Direction? = null
         private set
 
@@ -109,6 +112,7 @@ class GameEngine(
         refillDeck()
         maxTileValue = 3
         moveCount = 0
+        hasUsedShuffle = false
         previousSnapshot = null
         lastMoveDirection = null
 
@@ -635,6 +639,185 @@ class GameEngine(
         return true
     }
 
+    fun canShuffle(): Boolean {
+        if (hasUsedShuffle) return false
+        return hasPlayableShuffleArrangement()
+    }
+
+    private fun hasPlayableShuffleArrangement(): Boolean {
+        val tiles = mutableListOf<Tile>()
+        var hasEmpty = false
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val t = grid[r][c]
+                if (t == null) {
+                    hasEmpty = true
+                } else {
+                    tiles.add(t)
+                }
+            }
+        }
+        if (tiles.size < 2) return false
+        if (hasEmpty) return true
+        for (i in 0 until tiles.size) {
+            for (j in (i + 1) until tiles.size) {
+                if (Tile.canMerge(tiles[i], tiles[j])) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun findAnchorMaxTilePosition(): Pair<Int, Int>? {
+        var maxVal = -1
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val v = grid[r][c]?.value ?: continue
+                if (v > maxVal) maxVal = v
+            }
+        }
+        if (maxVal <= 0) return null
+
+        var bestPos: Pair<Int, Int>? = null
+        var bestScore = Float.NEGATIVE_INFINITY
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val tile = grid[r][c] ?: continue
+                if (tile.value != maxVal) continue
+                val habitScore = cellHabitWeights[r * size + c]
+                val structureBonus = when {
+                    isCorner(r, c) -> 0.02f
+                    isEdge(r, c) -> 0.01f
+                    else -> 0f
+                }
+                val score = habitScore + structureBonus
+                if (bestPos == null || score > bestScore) {
+                    bestScore = score
+                    bestPos = r to c
+                }
+            }
+        }
+        return bestPos
+    }
+
+    /**
+     * Randomly shuffles all tiles on the board except the single largest tile (which remains
+     * anchored at its current position), guarantees at least one valid move post-shuffle,
+     * consumes the 1-per-game shuffle, and clears the undo snapshot.
+     */
+    fun shuffleBoard(): Boolean {
+        if (!canShuffle()) return false
+        val anchorPos = findAnchorMaxTilePosition() ?: return false
+        val anchorTile = grid[anchorPos.first][anchorPos.second]?.copy(isMerged = false, isNew = false)
+            ?: return false
+
+        val otherCoords = mutableListOf<Pair<Int, Int>>()
+        val originalOtherTiles = mutableListOf<Tile?>()
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val pos = r to c
+                if (pos != anchorPos) {
+                    otherCoords.add(pos)
+                    originalOtherTiles.add(grid[r][c])
+                }
+            }
+        }
+
+        val candidateTiles = originalOtherTiles.toMutableList()
+        var foundPlayable = false
+
+        for (attempt in 0 until 80) {
+            candidateTiles.shuffle(random)
+            grid[anchorPos.first][anchorPos.second] = anchorTile
+            for (i in otherCoords.indices) {
+                val (r, c) = otherCoords[i]
+                grid[r][c] = candidateTiles[i]
+            }
+            if (!checkGameOver()) {
+                val changed = candidateTiles.indices.any { idx ->
+                    candidateTiles[idx]?.value != originalOtherTiles[idx]?.value
+                }
+                if (changed || attempt >= 20) {
+                    foundPlayable = true
+                    break
+                }
+            }
+        }
+
+        if (!foundPlayable) {
+            val mergeWithAnchorIdx = candidateTiles.indexOfFirst { Tile.canMerge(anchorTile, it) }
+            if (mergeWithAnchorIdx >= 0) {
+                val neighbors = getOrthogonalNeighbors(anchorPos.first, anchorPos.second)
+                val neighborCoord = neighbors[random.nextInt(neighbors.size)]
+                val neighborSlotIdx = otherCoords.indexOf(neighborCoord)
+                if (neighborSlotIdx >= 0) {
+                    val matchedTile = candidateTiles.removeAt(mergeWithAnchorIdx)
+                    candidateTiles.shuffle(random)
+                    candidateTiles.add(neighborSlotIdx, matchedTile)
+                }
+            } else {
+                var pairIdxA = -1
+                var pairIdxB = -1
+                outer@ for (i in 0 until candidateTiles.size) {
+                    for (j in (i + 1) until candidateTiles.size) {
+                        if (Tile.canMerge(candidateTiles[i], candidateTiles[j])) {
+                            pairIdxA = i
+                            pairIdxB = j
+                            break@outer
+                        }
+                    }
+                }
+                if (pairIdxA >= 0 && pairIdxB >= 0) {
+                    val tileB = candidateTiles.removeAt(pairIdxB)
+                    val tileA = candidateTiles.removeAt(pairIdxA)
+                    candidateTiles.shuffle(random)
+
+                    val adjacentCoordPairs = mutableListOf<Pair<Int, Int>>()
+                    for (i in otherCoords.indices) {
+                        val (r1, c1) = otherCoords[i]
+                        for (j in (i + 1) until otherCoords.size) {
+                            val (r2, c2) = otherCoords[j]
+                            if (kotlin.math.abs(r1 - r2) + kotlin.math.abs(c1 - c2) == 1) {
+                                adjacentCoordPairs.add(i to j)
+                            }
+                        }
+                    }
+                    if (adjacentCoordPairs.isNotEmpty()) {
+                        val (slotA, slotB) = adjacentCoordPairs[random.nextInt(adjacentCoordPairs.size)]
+                        val firstSlot = minOf(slotA, slotB)
+                        val secondSlot = maxOf(slotA, slotB)
+                        candidateTiles.add(firstSlot, tileA)
+                        candidateTiles.add(secondSlot, tileB)
+                    } else {
+                        candidateTiles.add(tileA)
+                        candidateTiles.add(tileB)
+                    }
+                }
+            }
+        }
+
+        grid[anchorPos.first][anchorPos.second] = anchorTile
+        for (i in otherCoords.indices) {
+            val (r, c) = otherCoords[i]
+            val t = candidateTiles[i]
+            grid[r][c] = t?.let {
+                Tile.create(
+                    value = it.value,
+                    isBonus = it.isBonus,
+                    isNew = true
+                )
+            }
+        }
+
+        hasUsedShuffle = true
+        previousSnapshot = null
+        lastMoveDirection = null
+        recalculateScore()
+        isGameOver = checkGameOver()
+        return !isGameOver
+    }
+
     fun canUndo(): Boolean = previousSnapshot != null
 
     fun getUndoSnapshot(): GameSnapshot? = previousSnapshot?.let { snap ->
@@ -690,7 +873,8 @@ class GameEngine(
         loadedScore: Int,
         loadedMaxTile: Int,
         loadedMoveCount: Int,
-        loadedPreviousSnapshot: GameSnapshot? = null
+        loadedPreviousSnapshot: GameSnapshot? = null,
+        loadedHasUsedShuffle: Boolean = false
     ) {
         var maxId = loadedNextTile.id
         for (r in 0 until size) {
@@ -719,6 +903,7 @@ class GameEngine(
         score = loadedScore
         maxTileValue = loadedMaxTile
         moveCount = loadedMoveCount
+        hasUsedShuffle = loadedHasUsedShuffle
         previousSnapshot = loadedPreviousSnapshot
         lastMoveDirection = null
         isGameOver = checkGameOver()

@@ -62,6 +62,7 @@ import com.threes.game.ui.components.NextTileCardStage
 import com.threes.game.ui.dialogs.CastBookDialog
 import com.threes.game.ui.dialogs.GameOverDialog
 import com.threes.game.ui.dialogs.SettingsDialog
+import com.threes.game.ui.dialogs.ShuffleRescueDialog
 import com.threes.game.ui.theme.BoardBackgroundDark
 import com.threes.game.ui.theme.BoardBackgroundLight
 import com.threes.game.ui.theme.BoardPlateDark
@@ -282,19 +283,29 @@ fun GameScreen(
             }
         }
 
-        // Dialog: Game Over
+        // Dialog: Shuffle Rescue Prompt or Game Over
         if (uiState.isGameOver && !uiState.isGameOverDialogDismissed) {
-            GameOverDialog(
-                score = uiState.score,
-                highScore = uiState.highScore,
-                isNewRecord = uiState.isNewRecord,
-                grid = uiState.grid,
-                canUndo = uiState.isUndoEnabled && uiState.canUndo,
-                onUndoLastMove = { viewModel.onUndo() },
-                onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
-                onPlayAgain = { viewModel.onStartNewGame() },
-                isDarkTheme = isDarkTheme
-            )
+            if (uiState.canShuffleRescue) {
+                ShuffleRescueDialog(
+                    maxTileValue = uiState.maxTileValue,
+                    onConfirmShuffle = { viewModel.onConfirmShuffle() },
+                    onDeclineToGameOver = { viewModel.onDeclineShuffle() },
+                    onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
+                    isDarkTheme = isDarkTheme
+                )
+            } else {
+                GameOverDialog(
+                    score = uiState.score,
+                    highScore = uiState.highScore,
+                    isNewRecord = uiState.isNewRecord,
+                    grid = uiState.grid,
+                    canUndo = uiState.isUndoEnabled && uiState.canUndo,
+                    onUndoLastMove = { viewModel.onUndo() },
+                    onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
+                    onPlayAgain = { viewModel.onStartNewGame() },
+                    isDarkTheme = isDarkTheme
+                )
+            }
         }
 
         // Dialog: Cast Book

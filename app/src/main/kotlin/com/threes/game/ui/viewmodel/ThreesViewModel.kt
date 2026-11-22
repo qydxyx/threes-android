@@ -26,9 +26,11 @@ data class GameUiState(
     val grid: List<List<Tile?>> = List(4) { List(4) { null } },
     val score: Int = 0,
     val highScore: Int = 0,
+    val maxTileValue: Int = 3,
     val nextTile: Tile = Tile.preview(1),
     val lastMoveDirection: Direction? = null,
     val isGameOver: Boolean = false,
+    val canShuffleRescue: Boolean = false,
     val isGameOverDialogDismissed: Boolean = false,
     val isNewRecord: Boolean = false,
     val canUndo: Boolean = false,
@@ -55,6 +57,7 @@ class ThreesViewModel internal constructor(
 
     private var baselineHighScore: Int = 0
     private var hasBrokenRecordInSession: Boolean = false
+    private var isShuffleDeclined: Boolean = false
     private var gameOverAudioJob: Job? = null
 
     private val _uiState = MutableStateFlow(GameUiState())
@@ -68,6 +71,7 @@ class ThreesViewModel internal constructor(
         sound.soundEnabled = prefs.isSoundEnabled
         sound.hapticsEnabled = prefs.isHapticsEnabled
         engine.setCellHabitWeights(prefs.getCellHabitWeights())
+        isShuffleDeclined = false
 
         val saved = prefs.loadGame()
         if (saved != null) {
@@ -80,7 +84,8 @@ class ThreesViewModel internal constructor(
                 loadedScore = saved.score,
                 loadedMaxTile = saved.maxTile,
                 loadedMoveCount = saved.moveCount,
-                loadedPreviousSnapshot = saved.previousSnapshot
+                loadedPreviousSnapshot = saved.previousSnapshot,
+                loadedHasUsedShuffle = saved.hasUsedShuffle
             )
             if (engine.getCellHabitWeights().all { it <= 0.001f } && engine.maxTileValue >= 6) {
                 engine.observeCurrentBoardHabits()
@@ -123,6 +128,7 @@ class ThreesViewModel internal constructor(
         if (!result.moved) return
 
         gameOverAudioJob?.cancel()
+        isShuffleDeclined = false
 
         // Handle merged tiles: play chimes and unlock characters
         val hadMerge = result.mergedTiles.isNotEmpty()
@@ -153,7 +159,8 @@ class ThreesViewModel internal constructor(
             prefs.highScore = engine.score
         }
 
-        if (engine.isGameOver) {
+        // Only play game over audio immediately if the 1-time shuffle rescue is no longer available
+        if (engine.isGameOver && !engine.canShuffle()) {
             val isNewRec = hasBrokenRecordInSession
             if (hadMerge) {
                 gameOverAudioJob = activeScope.launch {
@@ -170,10 +177,29 @@ class ThreesViewModel internal constructor(
         updateUiState(isGameOverDialogDismissed = false)
     }
 
+    fun onConfirmShuffle() {
+        gameOverAudioJob?.cancel()
+        if (engine.shuffleBoard()) {
+            isShuffleDeclined = false
+            sound.playSnap()
+            saveCurrentGame()
+            updateUiState(isGameOverDialogDismissed = false)
+        }
+    }
+
+    fun onDeclineShuffle() {
+        gameOverAudioJob?.cancel()
+        isShuffleDeclined = true
+        val isNewRec = hasBrokenRecordInSession
+        if (isNewRec) sound.playNewRecord() else sound.playGameOver()
+        updateUiState(isGameOverDialogDismissed = false)
+    }
+
     fun onUndo() {
         if (!prefs.isUndoEnabled || !engine.canUndo()) return
         gameOverAudioJob?.cancel()
         if (engine.undo()) {
+            isShuffleDeclined = false
             sound.playSnap()
             if (hasBrokenRecordInSession) {
                 if (engine.score <= baselineHighScore) {
@@ -190,6 +216,7 @@ class ThreesViewModel internal constructor(
 
     fun onStartNewGame() {
         gameOverAudioJob?.cancel()
+        isShuffleDeclined = false
         if (engine.maxTileValue >= 6) {
             engine.observeCurrentBoardHabits()
             prefs.saveCellHabitWeights(engine.getCellHabitWeights())
@@ -305,7 +332,8 @@ class ThreesViewModel internal constructor(
                 moveCount = engine.moveCount,
                 isNewRecord = hasBrokenRecordInSession,
                 baselineHighScore = baselineHighScore,
-                previousSnapshot = engine.getUndoSnapshot()
+                previousSnapshot = engine.getUndoSnapshot(),
+                hasUsedShuffle = engine.hasUsedShuffle
             )
         )
     }
@@ -317,9 +345,11 @@ class ThreesViewModel internal constructor(
             grid = engine.getGridSnapshot(),
             score = engine.score,
             highScore = prefs.highScore,
+            maxTileValue = engine.maxTileValue,
             nextTile = engine.nextTile,
             lastMoveDirection = engine.lastMoveDirection,
             isGameOver = engine.isGameOver,
+            canShuffleRescue = engine.isGameOver && engine.canShuffle() && !isShuffleDeclined,
             isGameOverDialogDismissed = if (engine.isGameOver) isGameOverDialogDismissed else false,
             isNewRecord = hasBrokenRecordInSession,
             canUndo = prefs.isUndoEnabled && engine.canUndo(),

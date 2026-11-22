@@ -210,14 +210,57 @@ class ThreesViewModelTest {
 
         val state = viewModel.uiState.value
         assertTrue(state.isGameOver)
+        // Before shuffle is used, the 1-time shuffle rescue prompt is offered first
+        assertTrue(state.canShuffleRescue)
         assertEquals(1, sound.snapCount)
-        assertEquals(1, sound.gameOverCount)
+        assertEquals(0, sound.gameOverCount)
         assertNotNull(storage.savedGame)
+
+        // Declining the shuffle transitions to the Game Over dialog and triggers game-over audio
+        viewModel.onDeclineShuffle()
+        assertFalse(viewModel.uiState.value.canShuffleRescue)
+        assertEquals(1, sound.gameOverCount)
 
         // Starting a new game resets game over and saves a fresh board
         viewModel.onStartNewGame()
         assertFalse(viewModel.uiState.value.isGameOver)
         assertNotNull(storage.savedGame)
+    }
+
+    @Test
+    fun testShuffleRescueConfirmContinuesGameAndOnlyAllowsOncePerGame() {
+        storage.highScore = 5000
+        storage.savedGame = SavedGame(
+            grid = listOf(
+                listOf(Tile.create(1), Tile.create(3), null, Tile.create(24)),
+                listOf(Tile.create(3), Tile.create(6), Tile.create(12), Tile.create(24)),
+                listOf(Tile.create(6), Tile.create(12), Tile.create(24), Tile.create(48)),
+                listOf(Tile.create(12), Tile.create(24), Tile.create(48), Tile.create(96))
+            ),
+            nextTile = Tile.create(1),
+            deck = listOf(2, 3),
+            score = 1644,
+            maxTile = 96,
+            moveCount = 30,
+            isNewRecord = false,
+            baselineHighScore = 5000
+        )
+        val engine = GameEngine(Random(30))
+        val viewModel = ThreesViewModel(storage, sound, engine, testScope)
+
+        viewModel.onMove(Direction.LEFT)
+        assertTrue(viewModel.uiState.value.isGameOver)
+        assertTrue(viewModel.uiState.value.canShuffleRescue)
+        assertTrue(viewModel.uiState.value.canUndo)
+
+        // Confirming shuffle rescues the board, keeps 96 at (3,3), clears undo, and marks shuffle used
+        viewModel.onConfirmShuffle()
+        val afterShuffle = viewModel.uiState.value
+        assertFalse(afterShuffle.isGameOver)
+        assertFalse(afterShuffle.canShuffleRescue)
+        assertFalse(afterShuffle.canUndo)
+        assertEquals(96, afterShuffle.grid[3][3]?.value)
+        assertTrue(storage.savedGame?.hasUsedShuffle == true)
     }
 
     @Test

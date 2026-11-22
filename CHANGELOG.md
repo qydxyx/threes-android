@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.8 (versionCode 15)
+
+### Improvements
+- Added **1-Time Shuffle Rescue** when the board runs out of moves (`ShuffleRescueDialog`, `GameEngine.shuffleBoard`, `ThreesViewModel`):
+  - Prompts the player once per game when all 16 cells are deadlocked (without adding any extra button to the main game UI).
+  - Keeps the largest tile anchored in its current position while randomly shuffling the remaining 15 tiles into a guaranteed playable state.
+  - Clears the undo snapshot upon shuffling to prevent re-rolling and persists `hasUsedShuffle` in `SavedGame`.
+
 ## v1.2.7 (versionCode 14)
 
 ### Improvements

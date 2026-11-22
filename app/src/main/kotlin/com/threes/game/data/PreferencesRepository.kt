@@ -16,7 +16,8 @@ data class SavedGame(
     val moveCount: Int,
     val isNewRecord: Boolean = false,
     val baselineHighScore: Int = 0,
-    val previousSnapshot: GameSnapshot? = null
+    val previousSnapshot: GameSnapshot? = null,
+    val hasUsedShuffle: Boolean = false
 )
 
 interface GameStorage {
@@ -127,6 +128,7 @@ class PreferencesRepository(context: Context) : GameStorage {
             json.put("moveCount", savedGame.moveCount)
             json.put("isNewRecord", savedGame.isNewRecord)
             json.put("baselineHighScore", savedGame.baselineHighScore)
+            json.put("hasUsedShuffle", savedGame.hasUsedShuffle)
 
             json.put("nextTile", tileToJson(savedGame.nextTile, includeBonusCandidates = true))
             json.put("deck", intListToJsonArray(savedGame.deck))
@@ -156,6 +158,7 @@ class PreferencesRepository(context: Context) : GameStorage {
             val moveCount = json.getInt("moveCount")
             val isNewRecord = json.optBoolean("isNewRecord", false)
             val baselineHighScore = json.optInt("baselineHighScore", highScore)
+            val hasUsedShuffle = json.optBoolean("hasUsedShuffle", false)
 
             val nextTile = jsonToTile(json.getJSONObject("nextTile"))
             val deck = jsonArrayToIntList(json.getJSONArray("deck"))
@@ -181,7 +184,8 @@ class PreferencesRepository(context: Context) : GameStorage {
                 moveCount = moveCount,
                 isNewRecord = isNewRecord,
                 baselineHighScore = baselineHighScore,
-                previousSnapshot = previousSnapshot
+                previousSnapshot = previousSnapshot,
+                hasUsedShuffle = hasUsedShuffle
             )
         } catch (_: Exception) {
             null
