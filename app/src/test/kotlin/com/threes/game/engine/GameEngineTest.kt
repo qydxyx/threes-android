@@ -498,29 +498,32 @@ class GameEngineTest {
     }
 
     @Test
-    fun testOneTimeShuffleKeepsMaxTileAnchoredClearsUndoAndGuaranteesPlayableBoard() {
+    fun testOneTimeShuffleLocksTopThreeTilesClearsUndoAndGuaranteesPlayableBoard() {
         val engine = GameEngine(Random(1234))
-        // Deadlocked 4x4 board where max tile 96 is at (3, 3)
+        // Deadlocked 4x4 board where top 3 tiles are: 192 at (3,3), 96 at (3,2), 48 at (2,3)
+        val tile192 = Tile.create(192)
+        val tile96 = Tile.create(96)
+        val tile48 = Tile.create(48)
         val deadGrid = listOf(
             listOf(Tile.create(1), Tile.create(3), Tile.create(6), Tile.create(12)),
             listOf(Tile.create(3), Tile.create(6), Tile.create(12), Tile.create(24)),
-            listOf(Tile.create(6), Tile.create(12), Tile.create(24), Tile.create(48)),
-            listOf(Tile.create(12), Tile.create(24), Tile.create(48), Tile.create(96))
+            listOf(Tile.create(6), Tile.create(12), Tile.create(24), tile48),
+            listOf(Tile.create(12), Tile.create(24), tile96, tile192)
         )
         val dummySnapshot = GameSnapshot(
             grid = deadGrid,
             score = 1000,
             nextTile = Tile.create(1),
             deck = listOf(2, 3),
-            maxTileValue = 96,
+            maxTileValue = 192,
             moveCount = 39
         )
         engine.restoreFromState(
             loadedGrid = deadGrid,
             loadedNextTile = Tile.create(1),
             loadedDeck = listOf(2, 3),
-            loadedScore = 1599,
-            loadedMaxTile = 96,
+            loadedScore = 3543,
+            loadedMaxTile = 192,
             loadedMoveCount = 40,
             loadedPreviousSnapshot = dummySnapshot
         )
@@ -529,6 +532,7 @@ class GameEngineTest {
         assertTrue(engine.canUndo())
         assertTrue(engine.canShuffle())
         assertFalse(engine.hasUsedShuffle)
+        assertEquals(listOf(192, 96, 48), engine.getLockedShuffleTileValues(3))
 
         val shuffled = engine.shuffleBoard()
         assertTrue(shuffled)
@@ -536,10 +540,17 @@ class GameEngineTest {
         assertFalse(engine.canShuffle())
         assertFalse("Expected board to have valid moves after shuffle", engine.isGameOver)
         assertFalse("Expected undo snapshot to be cleared after shuffle", engine.canUndo())
-        // Max tile 96 must remain anchored at (3, 3)
-        assertEquals(96, engine.grid[3][3]?.value)
+
+        // All 3 largest tiles must remain locked at their exact coordinates and IDs
+        assertEquals(tile192.id, engine.grid[3][3]?.id)
+        assertEquals(192, engine.grid[3][3]?.value)
+        assertEquals(tile96.id, engine.grid[3][2]?.id)
+        assertEquals(96, engine.grid[3][2]?.value)
+        assertEquals(tile48.id, engine.grid[2][3]?.id)
+        assertEquals(48, engine.grid[2][3]?.value)
+
         // Total tile values on board must remain identical (same score)
-        assertEquals(1599, engine.score)
+        assertEquals(3543, engine.score)
 
         // Second shuffle attempt in the same game must be rejected
         assertFalse(engine.shuffleBoard())

@@ -251,15 +251,18 @@ class ThreesViewModelTest {
         viewModel.onMove(Direction.LEFT)
         assertTrue(viewModel.uiState.value.isGameOver)
         assertTrue(viewModel.uiState.value.canShuffleRescue)
+        assertEquals(listOf(96, 48, 48), viewModel.uiState.value.lockedShuffleTileValues)
         assertTrue(viewModel.uiState.value.canUndo)
 
-        // Confirming shuffle rescues the board, keeps 96 at (3,3), clears undo, and marks shuffle used
+        // Confirming shuffle rescues the board, keeps top 3 tiles at (3,3), (2,3), (3,2), clears undo, and marks shuffle used
         viewModel.onConfirmShuffle()
         val afterShuffle = viewModel.uiState.value
         assertFalse(afterShuffle.isGameOver)
         assertFalse(afterShuffle.canShuffleRescue)
         assertFalse(afterShuffle.canUndo)
         assertEquals(96, afterShuffle.grid[3][3]?.value)
+        assertEquals(48, afterShuffle.grid[2][3]?.value)
+        assertEquals(48, afterShuffle.grid[3][2]?.value)
         assertTrue(storage.savedGame?.hasUsedShuffle == true)
     }
 

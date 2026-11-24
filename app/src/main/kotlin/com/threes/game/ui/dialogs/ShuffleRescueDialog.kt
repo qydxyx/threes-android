@@ -54,7 +54,7 @@ import com.threes.game.ui.theme.TextSecondaryLight
 
 @Composable
 fun ShuffleRescueDialog(
-    maxTileValue: Int,
+    lockedTileValues: List<Int>,
     onConfirmShuffle: () -> Unit,
     onDeclineToGameOver: () -> Unit,
     onDismissToViewBoard: () -> Unit = {},
@@ -132,7 +132,10 @@ fun ShuffleRescueDialog(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.shuffle_rescue_message, maxTileValue),
+                        text = stringResource(
+                            R.string.shuffle_rescue_message,
+                            lockedTileValues.joinToString(", ")
+                        ),
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
                         fontWeight = FontWeight.Medium,

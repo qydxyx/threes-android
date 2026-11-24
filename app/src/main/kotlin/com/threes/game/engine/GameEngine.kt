@@ -644,80 +644,114 @@ class GameEngine(
         return hasPlayableShuffleArrangement()
     }
 
+    fun getLockedShuffleTileValues(maxLockedCount: Int = 3): List<Int> {
+        return findAnchorTopTilePositions(maxLockedCount).mapNotNull { (r, c) ->
+            grid[r][c]?.value
+        }
+    }
+
     private fun hasPlayableShuffleArrangement(): Boolean {
-        val tiles = mutableListOf<Tile>()
+        val anchorPositions = findAnchorTopTilePositions(3)
+        if (anchorPositions.isEmpty()) return false
+        val anchorSet = anchorPositions.toSet()
+        val anchorTiles = anchorPositions.mapNotNull { (r, c) ->
+            grid[r][c]?.let { (r to c) to it }
+        }
+        val otherCoords = mutableListOf<Pair<Int, Int>>()
+        val otherTiles = mutableListOf<Tile>()
         var hasEmpty = false
         for (r in 0 until size) {
             for (c in 0 until size) {
-                val t = grid[r][c]
-                if (t == null) {
-                    hasEmpty = true
-                } else {
-                    tiles.add(t)
+                val pos = r to c
+                if (pos !in anchorSet) {
+                    otherCoords.add(pos)
+                    val t = grid[r][c]
+                    if (t == null) {
+                        hasEmpty = true
+                    } else {
+                        otherTiles.add(t)
+                    }
                 }
             }
         }
-        if (tiles.size < 2) return false
-        if (hasEmpty) return true
-        for (i in 0 until tiles.size) {
-            for (j in (i + 1) until tiles.size) {
-                if (Tile.canMerge(tiles[i], tiles[j])) {
-                    return true
+        if (otherCoords.isEmpty()) return false
+        if (hasEmpty && (otherTiles.isNotEmpty() || anchorTiles.isNotEmpty())) return true
+
+        val hasAdjacentOtherPair = otherCoords.indices.any { i ->
+            val (r1, c1) = otherCoords[i]
+            (i + 1 until otherCoords.size).any { j ->
+                val (r2, c2) = otherCoords[j]
+                kotlin.math.abs(r1 - r2) + kotlin.math.abs(c1 - c2) == 1
+            }
+        }
+        if (hasAdjacentOtherPair) {
+            for (i in 0 until otherTiles.size) {
+                for (j in (i + 1) until otherTiles.size) {
+                    if (Tile.canMerge(otherTiles[i], otherTiles[j])) {
+                        return true
+                    }
                 }
+            }
+        }
+
+        for ((anchorPos, anchorTile) in anchorTiles) {
+            val hasFreeNeighbor = getOrthogonalNeighbors(anchorPos.first, anchorPos.second)
+                .any { it in otherCoords }
+            if (hasFreeNeighbor && otherTiles.any { Tile.canMerge(anchorTile, it) }) {
+                return true
             }
         }
         return false
     }
 
-    private fun findAnchorMaxTilePosition(): Pair<Int, Int>? {
-        var maxVal = -1
-        for (r in 0 until size) {
-            for (c in 0 until size) {
-                val v = grid[r][c]?.value ?: continue
-                if (v > maxVal) maxVal = v
-            }
-        }
-        if (maxVal <= 0) return null
-
-        var bestPos: Pair<Int, Int>? = null
-        var bestScore = Float.NEGATIVE_INFINITY
+    private fun findAnchorTopTilePositions(maxCount: Int = 3): List<Pair<Int, Int>> {
+        val allTiles = mutableListOf<Pair<Pair<Int, Int>, Tile>>()
         for (r in 0 until size) {
             for (c in 0 until size) {
                 val tile = grid[r][c] ?: continue
-                if (tile.value != maxVal) continue
-                val habitScore = cellHabitWeights[r * size + c]
-                val structureBonus = when {
-                    isCorner(r, c) -> 0.02f
-                    isEdge(r, c) -> 0.01f
-                    else -> 0f
-                }
-                val score = habitScore + structureBonus
-                if (bestPos == null || score > bestScore) {
-                    bestScore = score
-                    bestPos = r to c
-                }
+                allTiles.add((r to c) to tile)
             }
         }
-        return bestPos
+        val lockCount = minOf(maxCount, (allTiles.size - 2).coerceAtLeast(0))
+        if (lockCount <= 0) return emptyList()
+
+        return allTiles
+            .sortedWith(
+                compareByDescending<Pair<Pair<Int, Int>, Tile>> { it.second.value }
+                    .thenByDescending { (pos, _) -> cellHabitWeights[pos.first * size + pos.second] }
+                    .thenByDescending { (pos, _) ->
+                        when {
+                            isCorner(pos.first, pos.second) -> 2
+                            isEdge(pos.first, pos.second) -> 1
+                            else -> 0
+                        }
+                    }
+                    .thenBy { (pos, _) -> pos.first * size + pos.second }
+            )
+            .take(lockCount)
+            .map { it.first }
     }
 
     /**
-     * Randomly shuffles all tiles on the board except the single largest tile (which remains
-     * anchored at its current position), guarantees at least one valid move post-shuffle,
+     * Randomly shuffles all tiles on the board except the 3 largest tiles (which remain
+     * locked at their current positions), guarantees at least one valid move post-shuffle,
      * consumes the 1-per-game shuffle, and clears the undo snapshot.
      */
     fun shuffleBoard(): Boolean {
         if (!canShuffle()) return false
-        val anchorPos = findAnchorMaxTilePosition() ?: return false
-        val anchorTile = grid[anchorPos.first][anchorPos.second]?.copy(isMerged = false, isNew = false)
-            ?: return false
+        val anchorPositions = findAnchorTopTilePositions(3)
+        if (anchorPositions.isEmpty()) return false
+        val anchorSet = anchorPositions.toSet()
+        val anchorTiles = anchorPositions.associateWith { (r, c) ->
+            grid[r][c]!!.copy(isMerged = false, isNew = false)
+        }
 
         val otherCoords = mutableListOf<Pair<Int, Int>>()
         val originalOtherTiles = mutableListOf<Tile?>()
         for (r in 0 until size) {
             for (c in 0 until size) {
                 val pos = r to c
-                if (pos != anchorPos) {
+                if (pos !in anchorSet) {
                     otherCoords.add(pos)
                     originalOtherTiles.add(grid[r][c])
                 }
@@ -729,7 +763,9 @@ class GameEngine(
 
         for (attempt in 0 until 80) {
             candidateTiles.shuffle(random)
-            grid[anchorPos.first][anchorPos.second] = anchorTile
+            for ((pos, tile) in anchorTiles) {
+                grid[pos.first][pos.second] = tile
+            }
             for (i in otherCoords.indices) {
                 val (r, c) = otherCoords[i]
                 grid[r][c] = candidateTiles[i]
@@ -746,58 +782,63 @@ class GameEngine(
         }
 
         if (!foundPlayable) {
-            val mergeWithAnchorIdx = candidateTiles.indexOfFirst { Tile.canMerge(anchorTile, it) }
-            if (mergeWithAnchorIdx >= 0) {
-                val neighbors = getOrthogonalNeighbors(anchorPos.first, anchorPos.second)
-                val neighborCoord = neighbors[random.nextInt(neighbors.size)]
-                val neighborSlotIdx = otherCoords.indexOf(neighborCoord)
-                if (neighborSlotIdx >= 0) {
-                    val matchedTile = candidateTiles.removeAt(mergeWithAnchorIdx)
-                    candidateTiles.shuffle(random)
-                    candidateTiles.add(neighborSlotIdx, matchedTile)
-                }
-            } else {
-                var pairIdxA = -1
-                var pairIdxB = -1
-                outer@ for (i in 0 until candidateTiles.size) {
-                    for (j in (i + 1) until candidateTiles.size) {
-                        if (Tile.canMerge(candidateTiles[i], candidateTiles[j])) {
-                            pairIdxA = i
-                            pairIdxB = j
-                            break@outer
-                        }
+            var pairIdxA = -1
+            var pairIdxB = -1
+            outer@ for (i in 0 until candidateTiles.size) {
+                for (j in (i + 1) until candidateTiles.size) {
+                    if (Tile.canMerge(candidateTiles[i], candidateTiles[j])) {
+                        pairIdxA = i
+                        pairIdxB = j
+                        break@outer
                     }
                 }
-                if (pairIdxA >= 0 && pairIdxB >= 0) {
-                    val tileB = candidateTiles.removeAt(pairIdxB)
-                    val tileA = candidateTiles.removeAt(pairIdxA)
-                    candidateTiles.shuffle(random)
+            }
 
-                    val adjacentCoordPairs = mutableListOf<Pair<Int, Int>>()
-                    for (i in otherCoords.indices) {
-                        val (r1, c1) = otherCoords[i]
-                        for (j in (i + 1) until otherCoords.size) {
-                            val (r2, c2) = otherCoords[j]
-                            if (kotlin.math.abs(r1 - r2) + kotlin.math.abs(c1 - c2) == 1) {
-                                adjacentCoordPairs.add(i to j)
+            val adjacentCoordPairs = mutableListOf<Pair<Int, Int>>()
+            for (i in otherCoords.indices) {
+                val (r1, c1) = otherCoords[i]
+                for (j in (i + 1) until otherCoords.size) {
+                    val (r2, c2) = otherCoords[j]
+                    if (kotlin.math.abs(r1 - r2) + kotlin.math.abs(c1 - c2) == 1) {
+                        adjacentCoordPairs.add(i to j)
+                    }
+                }
+            }
+
+            if (pairIdxA >= 0 && pairIdxB >= 0 && adjacentCoordPairs.isNotEmpty()) {
+                val tileB = candidateTiles.removeAt(pairIdxB)
+                val tileA = candidateTiles.removeAt(pairIdxA)
+                candidateTiles.shuffle(random)
+
+                val (slotA, slotB) = adjacentCoordPairs[random.nextInt(adjacentCoordPairs.size)]
+                val firstSlot = minOf(slotA, slotB)
+                val secondSlot = maxOf(slotA, slotB)
+                candidateTiles.add(firstSlot, tileA)
+                candidateTiles.add(secondSlot, tileB)
+            } else {
+                for ((anchorPos, anchorTile) in anchorTiles) {
+                    val mergeIdx = candidateTiles.indexOfFirst { Tile.canMerge(anchorTile, it) }
+                    if (mergeIdx >= 0) {
+                        val freeNeighbors = getOrthogonalNeighbors(anchorPos.first, anchorPos.second)
+                            .filter { it in otherCoords }
+                        if (freeNeighbors.isNotEmpty()) {
+                            val neighborCoord = freeNeighbors[random.nextInt(freeNeighbors.size)]
+                            val neighborSlotIdx = otherCoords.indexOf(neighborCoord)
+                            if (neighborSlotIdx >= 0) {
+                                val matchedTile = candidateTiles.removeAt(mergeIdx)
+                                candidateTiles.shuffle(random)
+                                candidateTiles.add(neighborSlotIdx, matchedTile)
+                                break
                             }
                         }
-                    }
-                    if (adjacentCoordPairs.isNotEmpty()) {
-                        val (slotA, slotB) = adjacentCoordPairs[random.nextInt(adjacentCoordPairs.size)]
-                        val firstSlot = minOf(slotA, slotB)
-                        val secondSlot = maxOf(slotA, slotB)
-                        candidateTiles.add(firstSlot, tileA)
-                        candidateTiles.add(secondSlot, tileB)
-                    } else {
-                        candidateTiles.add(tileA)
-                        candidateTiles.add(tileB)
                     }
                 }
             }
         }
 
-        grid[anchorPos.first][anchorPos.second] = anchorTile
+        for ((pos, tile) in anchorTiles) {
+            grid[pos.first][pos.second] = tile
+        }
         for (i in otherCoords.indices) {
             val (r, c) = otherCoords[i]
             val t = candidateTiles[i]

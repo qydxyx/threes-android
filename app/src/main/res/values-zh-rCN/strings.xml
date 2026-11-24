@@ -42,7 +42,7 @@
     <string name="locked_character_hint">合成 %1$d 即可解锁该角色的故事！</string>
     <string name="shuffle_rescue_title">无路可走</string>
     <string name="shuffle_rescue_badge">★ 本局仅 1 次洗牌救援 ★</string>
-    <string name="shuffle_rescue_message">是否保留当前最大数字（%1$d）在原位不动，将其余 15 张棋子随机打乱以继续对局？</string>
+    <string name="shuffle_rescue_message">是否锁定当前最大的 3 个数字（%1$s）在原位不动，将其余 13 张棋子随机打乱以继续对局？</string>
     <string name="shuffle_confirm">随机打乱 (1/1)</string>
     <string name="shuffle_decline">直接结算</string>
 </resources>

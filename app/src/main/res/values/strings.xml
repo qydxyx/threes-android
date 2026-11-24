@@ -42,7 +42,7 @@
     <string name="locked_character_hint">Combine tiles to reach %1$d and unlock this character\'s story!</string>
     <string name="shuffle_rescue_title">OUT OF MOVES</string>
     <string name="shuffle_rescue_badge">★ 1-TIME SHUFFLE RESCUE ★</string>
-    <string name="shuffle_rescue_message">Keep your largest tile (%1$d) anchored in place and randomly shuffle the remaining 15 tiles to continue?</string>
+    <string name="shuffle_rescue_message">Keep your 3 largest tiles (%1$s) locked in place and randomly shuffle the remaining 13 tiles to continue?</string>
     <string name="shuffle_confirm">Shuffle (1/1)</string>
     <string name="shuffle_decline">End Game</string>
 </resources>

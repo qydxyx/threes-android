@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.9 (versionCode 16)
+
+### Improvements
+- Updated **1-Time Shuffle Rescue** (`GameEngine.shuffleBoard`, `ShuffleRescueDialog`) to lock the **3 largest tiles** in place and randomly shuffle only the remaining 13 tiles into a guaranteed playable arrangement.
+
 ## v1.2.8 (versionCode 15)
 
 ### Improvements

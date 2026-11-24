@@ -287,7 +287,7 @@ fun GameScreen(
         if (uiState.isGameOver && !uiState.isGameOverDialogDismissed) {
             if (uiState.canShuffleRescue) {
                 ShuffleRescueDialog(
-                    maxTileValue = uiState.maxTileValue,
+                    lockedTileValues = uiState.lockedShuffleTileValues,
                     onConfirmShuffle = { viewModel.onConfirmShuffle() },
                     onDeclineToGameOver = { viewModel.onDeclineShuffle() },
                     onDismissToViewBoard = { viewModel.dismissGameOverDialog() },
